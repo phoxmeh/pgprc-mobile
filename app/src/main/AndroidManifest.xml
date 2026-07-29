@@ -1,0 +1,55 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Bluetooth SPP (Mobilinkd/TNC3-style KISS TNCs). Legacy permissions for
+         pre-Android-12; BLUETOOTH_CONNECT/SCAN are the runtime-requested ones
+         on API 31+. -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+
+    <!-- USB-serial KISS TNC over OTG. -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+
+    <!-- Desktop-notification-equivalent (directed-frame / incoming-connection alerts). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Keeps live port connections and scheduled beacons running while backgrounded.
+         dataSync fits the network transports (AGWPE/KISS-TCP/Telnet/SSH) built so far.
+         connectedDevice needs a runtime-*granted* Bluetooth/USB permission at the moment
+         startForeground() is called, not just a manifest declaration — add it back
+         alongside dataSync (and request BLUETOOTH_CONNECT first) once the Bluetooth/
+         USB-serial transports land (tasks #89/#90), rather than declaring it prematurely. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <application
+        android:name=".PacketRadioApp"
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.PgprcMobile"
+        android:supportsRtl="true">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.PgprcMobile">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".service.PacketRadioService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false" />
+
+    </application>
+
+</manifest>

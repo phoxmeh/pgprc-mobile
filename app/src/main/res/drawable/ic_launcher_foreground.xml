@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Placeholder launcher glyph (antenna + signal waves, matching the desktop
+     app's icon motif) — real icon polish is a later phase, not yet done. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M 34,43.6 A 24,24 0 0 1 74,43.6"
+        android:strokeColor="#99C1F1"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 26.8,37.2 A 35.2,35.2 0 0 1 81.2,37.2"
+        android:strokeColor="#99C1F1"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 54,43.6 L 54,83.6 M 41.2,83.6 L 66.8,83.6"
+        android:strokeColor="#F6F5F4"
+        android:strokeWidth="4.8"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 59.6,43.6 A 5.6,5.6 0 1 1 48.4,43.6 A 5.6,5.6 0 1 1 59.6,43.6"
+        android:fillColor="#F6F5F4" />
+</vector>

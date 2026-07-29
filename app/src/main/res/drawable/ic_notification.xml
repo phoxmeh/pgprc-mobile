@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Monochrome notification icon. Android renders status-bar notification
+     icons as a plain silhouette using only the alpha channel (any opaque
+     color here is overridden by the system), so the actual color chosen
+     below doesn't matter — just that shapes are fully opaque. Same
+     antenna+waves motif as the launcher icon, no background. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M 8,10 A 4,4 0 0 1 16,10"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.4"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 6,8 A 6,6 0 0 1 18,8"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.4"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 12,10 L 12,19 M 9,19 L 15,19"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.6"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 13,10 A 1,1 0 1 1 11,10 A 1,1 0 1 1 13,10"
+        android:fillColor="#FFFFFF" />
+</vector>
