@@ -32,10 +32,11 @@ sealed interface PortEvent {
 
     /**
      * One line of raw port/frame activity for the Monitor view.
-     * [to] is the destination callsign when this frame is "directed" (e.g. a
-     * UI/unproto frame or an incoming connection) and `null` otherwise —
-     * connected-mode traffic and our own TX echoes never set it. Consumed by
-     * the notification-eligibility check the same way as the desktop app.
+     * [to] is the destination callsign for a UI/unproto frame — both received and our own sent
+     * echoes — and `null` for connected-mode traffic (I/S/U frames belonging to a dialed
+     * session). Doubles as the Monitor screen's "UI" filter signal (`to != null`, see
+     * [net.packetradio.mobile.ui.session.SessionViewModel.unprotoOnly]) and is meant to also
+     * back a self-notification-eligibility check later, the same way the desktop app's does.
      */
     data class Monitor(val line: String, val to: String?) : PortEvent
 

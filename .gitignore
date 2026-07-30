@@ -9,6 +9,7 @@
 .cxx
 */build
 */*/build
+/*/bin
 local.properties
 
 # Keystores — never commit signing material

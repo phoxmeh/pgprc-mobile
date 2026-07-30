@@ -50,7 +50,7 @@ class KissTcpRunnerDirewolfLiveTest {
         withTimeout(5000) {
             while (!sawLocalTxLine) {
                 val event = events.receive()
-                if (event is PortEvent.Monitor && event.line.contains("[unproto TX]") && event.line.contains(marker)) {
+                if (event is PortEvent.Monitor && event.line.contains("[UI TX]") && event.line.contains(marker)) {
                     sawLocalTxLine = true
                     assertTrue("expected the via path in the local TX line", event.line.contains("via WIDE1-1"))
                 }

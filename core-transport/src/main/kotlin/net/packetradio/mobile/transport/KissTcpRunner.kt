@@ -103,8 +103,8 @@ class KissTcpRunner(private val config: PortConfig.KissTcp) : PortRunner {
                                     val viaSuffix = if (command.via.isEmpty()) "" else " via ${command.via.joinToString(",")}"
                                     events.send(
                                         PortEvent.Monitor(
-                                            "${config.myCall} > ${command.dest}$viaSuffix [unproto TX]: ${String(command.bytes)}",
-                                            null,
+                                            "${config.myCall} > ${command.dest}$viaSuffix [UI TX]: ${String(command.bytes)}",
+                                            command.dest,
                                         ),
                                     )
                                 }

@@ -2,8 +2,8 @@
 
 package net.packetradio.mobile.ui.session
 
-import android.app.Activity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
@@ -43,7 +43,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
@@ -82,7 +81,7 @@ fun SessionScreen(onOpenSettings: () -> Unit, onQuit: () -> Unit, viewModel: Ses
     // also removes the task itself — indistinguishable from swiping the app away in Recents,
     // which is exactly what triggers the service's onTaskRemoved (drops every port/session). Back
     // should behave like Home instead: close an open drawer first, or just background the app.
-    val activity = LocalContext.current as? Activity
+    val activity = LocalActivity.current
     BackHandler {
         when {
             leftDrawerOpen -> leftDrawerOpen = false

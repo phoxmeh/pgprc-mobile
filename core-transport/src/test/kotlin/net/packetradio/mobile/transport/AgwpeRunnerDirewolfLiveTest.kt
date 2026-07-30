@@ -46,12 +46,12 @@ class AgwpeRunnerDirewolfLiveTest {
             while (!sawDirewolfEcho) {
                 val event = events.receive()
                 if (event is PortEvent.Monitor) {
-                    if (event.line.contains("[unproto TX]") && event.line.contains(marker)) sawLocalTxLine = true
+                    if (event.line.contains("[UI TX]") && event.line.contains(marker)) sawLocalTxLine = true
                     if (event.line.contains("[T]") && event.line.contains(marker)) sawDirewolfEcho = true
                 }
             }
         }
-        assertTrue("expected our own locally-logged [unproto TX] line", sawLocalTxLine)
+        assertTrue("expected our own locally-logged [UI TX] line", sawLocalTxLine)
         assertTrue("expected Direwolf's own [T] transmit-confirmation echo", sawDirewolfEcho)
 
         commands.send(PortCommand.Disconnect)

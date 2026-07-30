@@ -107,8 +107,8 @@ class AgwpeRunner(private val config: PortConfig.Agwpe) : PortRunner {
                         is PortCommand.SendUnproto -> {
                             events.send(
                                 PortEvent.Monitor(
-                                    "${config.myCall} > ${command.dest} [unproto TX]: ${String(command.bytes)}",
-                                    null,
+                                    "${config.myCall} > ${command.dest} [UI TX]: ${String(command.bytes)}",
+                                    command.dest,
                                 ),
                             )
                             val frame = if (command.via.isEmpty()) {
