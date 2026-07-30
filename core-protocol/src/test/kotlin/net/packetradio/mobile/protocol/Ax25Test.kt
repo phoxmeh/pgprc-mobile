@@ -100,12 +100,62 @@ class Ax25Test {
         }
 
         assertEquals(Ax25FrameContent.ReceiveReady(3, false), Ax25.decodeFrame(sFrame(0, 3))!!.content)
-        assertEquals(Ax25FrameContent.Reject(5, false), Ax25.decodeFrame(sFrame(1, 5))!!.content)
-        assertEquals(Ax25FrameContent.ReceiveNotReady(1, false), Ax25.decodeFrame(sFrame(2, 1))!!.content)
+        assertEquals(Ax25FrameContent.ReceiveNotReady(5, false), Ax25.decodeFrame(sFrame(1, 5))!!.content)
+        assertEquals(Ax25FrameContent.Reject(1, false), Ax25.decodeFrame(sFrame(2, 1))!!.content)
     }
 
     @Test
     fun `decodeFrame returns null for a truncated buffer`() {
         assertNull(Ax25.decodeFrame(ByteArray(5)))
+    }
+
+    private val a = Ax25Address("KD3BFP", 9)
+    private val b = Ax25Address("N0CALL", 1)
+
+    @Test
+    fun `encodeSabm and encodeDisc round-trip as commands with P set`() {
+        assertEquals(Ax25FrameContent.SetAsynchronousBalancedMode, Ax25.decodeFrame(Ax25.encodeSabm(a, b))!!.content)
+        assertEquals(Ax25FrameContent.Disconnect, Ax25.decodeFrame(Ax25.encodeDisc(a, b))!!.content)
+    }
+
+    @Test
+    fun `encodeUa and encodeDm round-trip as responses with F set`() {
+        assertEquals(Ax25FrameContent.UnnumberedAcknowledge, Ax25.decodeFrame(Ax25.encodeUa(a, b))!!.content)
+        assertEquals(Ax25FrameContent.DisconnectedMode, Ax25.decodeFrame(Ax25.encodeDm(a, b))!!.content)
+    }
+
+    @Test
+    fun `encodeInformation round-trips sequence numbers, poll-final, and info`() {
+        val encoded = Ax25.encodeInformation(a, b, ns = 3, nr = 5, pollFinal = true, info = "hi".toByteArray())
+        val content = Ax25.decodeFrame(encoded)!!.content as Ax25FrameContent.Information
+        assertEquals(3, content.ns)
+        assertEquals(5, content.nr)
+        assertTrue(content.pollFinal)
+        assertEquals("hi", String(content.info))
+    }
+
+    @Test
+    fun `encodeReceiveReady and encodeReject round-trip N(R) into the correct frame type`() {
+        val rr = Ax25.decodeFrame(Ax25.encodeReceiveReady(a, b, nr = 4, pollFinal = false, command = false))!!.content
+        assertEquals(Ax25FrameContent.ReceiveReady(4, false), rr)
+
+        val rej = Ax25.decodeFrame(Ax25.encodeReject(a, b, nr = 2, pollFinal = true, command = false))!!.content
+        assertEquals(Ax25FrameContent.Reject(2, true), rej)
+    }
+
+    /** The destination's C-bit (0x80) is 1 for a command frame, 0 for a response — and the mirror on the source. */
+    @Test
+    fun `command frames and response frames set the C-bit oppositely on destination vs source`() {
+        val command = Ax25.encodeSabm(a, b)
+        val destByte = command[6].toInt() and 0xFF
+        val sourceByte = command[13].toInt() and 0xFF
+        assertTrue("destination C-bit set on a command frame", (destByte and 0x80) != 0)
+        assertTrue("source C-bit clear on a command frame", (sourceByte and 0x80) == 0)
+
+        val response = Ax25.encodeUa(a, b)
+        val destByteResp = response[6].toInt() and 0xFF
+        val sourceByteResp = response[13].toInt() and 0xFF
+        assertTrue("destination C-bit clear on a response frame", (destByteResp and 0x80) == 0)
+        assertTrue("source C-bit set on a response frame", (sourceByteResp and 0x80) != 0)
     }
 }

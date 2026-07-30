@@ -27,8 +27,9 @@ import net.packetradio.mobile.model.supportsConnect
 /**
  * Dials a new session tab — the only way one is ever created (mirrors the
  * desktop's Ctrl+N dial dialog). Only ports whose kind actually supports a
- * two-way AX.25 connection are offered here; KISS-only ports never appear
- * (they're unproto-only and live on the Monitor screen's ad-hoc bar instead).
+ * two-way AX.25 connection are offered here — AGWPE, KISS-TCP, and Bluetooth
+ * KISS; USB-serial KISS isn't wired up yet and stays unproto-only on the
+ * Monitor screen's ad-hoc bar for now (see [net.packetradio.mobile.model.supportsConnect]).
  */
 @Composable
 fun DialDialog(

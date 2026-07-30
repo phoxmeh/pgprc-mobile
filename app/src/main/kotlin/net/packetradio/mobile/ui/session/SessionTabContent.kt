@@ -49,7 +49,7 @@ import net.packetradio.mobile.model.defaultHighlightRules
 @Composable
 fun SessionTabContent(
     tab: SessionTabState,
-    monitorLines: List<String>,
+    monitorLines: List<MonitorLine>,
     portConnected: Boolean,
     myCall: String,
     highlightPrefs: HighlightPrefs,
@@ -131,7 +131,7 @@ fun SessionTabContent(
 /** An always-visible, user-resizable ([MonitorResizeHandle]) preview of the last few Monitor lines. */
 @Composable
 private fun MiniMonitor(
-    monitorLines: List<String>,
+    monitorLines: List<MonitorLine>,
     height: Dp,
     myCall: String,
     highlightPrefs: HighlightPrefs,
@@ -149,7 +149,7 @@ private fun MiniMonitor(
         LazyColumn(state = listState, modifier = Modifier.padding(6.dp)) {
             items(monitorLines.takeLast(50)) { line ->
                 Text(
-                    highlightMonitorLine(line, myCall, highlightPrefs, defaultHighlightRules(), mutedColor, errorColor),
+                    highlightMonitorLine(line.text, myCall, highlightPrefs, defaultHighlightRules(), mutedColor, errorColor),
                     style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                 )
             }

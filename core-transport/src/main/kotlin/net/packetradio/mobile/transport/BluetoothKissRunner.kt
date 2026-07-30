@@ -7,10 +7,12 @@ import java.io.IOException
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 import net.packetradio.mobile.model.KissParams
 import net.packetradio.mobile.model.PortCommand
@@ -19,19 +21,18 @@ import net.packetradio.mobile.model.PortEvent
 import net.packetradio.mobile.model.PortRunner
 import net.packetradio.mobile.protocol.Ax25
 import net.packetradio.mobile.protocol.Ax25Address
+import net.packetradio.mobile.protocol.Ax25DecodedFrame
 import net.packetradio.mobile.protocol.Ax25FrameContent
 import net.packetradio.mobile.protocol.Kiss
 import net.packetradio.mobile.protocol.KissDecoder
 
 /**
- * Classic Bluetooth SPP KISS client (Mobilinkd/TNC3-style TNCs). Same
- * bare-KISS command handling as [KissTcpRunner] — connected mode is out of
- * scope, only [PortCommand.SendUnproto] and [PortCommand.Disconnect] do
- * anything — the sole difference is the transport: an RFCOMM
- * [android.bluetooth.BluetoothSocket] to the well-known SPP UUID instead of
- * a TCP socket. The device must already be paired (bonded) via Android's
- * own Bluetooth settings; this runner only opens a connection to it, it
- * never scans or pairs.
+ * Classic Bluetooth SPP KISS client (Mobilinkd/TNC3-style TNCs). Same bare-KISS command
+ * handling as [KissTcpRunner], including connected mode via [KissConnectedModeDriver] — the
+ * sole difference is the transport: an RFCOMM [android.bluetooth.BluetoothSocket] to the
+ * well-known SPP UUID instead of a TCP socket. The device must already be paired (bonded) via
+ * Android's own Bluetooth settings; this runner only opens a connection to it, it never scans
+ * or pairs.
  */
 class BluetoothKissRunner(private val config: PortConfig.BluetoothKiss) : PortRunner {
 
@@ -49,7 +50,9 @@ class BluetoothKissRunner(private val config: PortConfig.BluetoothKiss) : PortRu
                 return@withContext
             }
 
-            val socket = try {
+            events.send(PortEvent.PortLog("Connecting to ${config.deviceName} (${config.deviceAddress})…"))
+
+            val connection = try {
                 // No BLUETOOTH_SCAN dependency needed: this app only ever connects to an
                 // already-paired device (see BluetoothDevicePicker), never discovers/pairs
                 // one itself, so there's no discovery of our own to cancel here.
@@ -62,7 +65,9 @@ class BluetoothKissRunner(private val config: PortConfig.BluetoothKiss) : PortRu
                 events.send(PortEvent.PortError(e.message ?: "Bluetooth permission not granted"))
                 return@withContext
             }
+            val socket = connection.socket
             events.send(PortEvent.PortConnected)
+            events.send(PortEvent.PortLog(connection.describeForLog()))
 
             val output = socket.outputStream
             fun writeKiss(bytes: ByteArray) = synchronized(output) {
@@ -71,6 +76,11 @@ class BluetoothKissRunner(private val config: PortConfig.BluetoothKiss) : PortRu
             }
 
             sendKissParams(config.kissParams, ::writeKiss)
+            describeKissParams(config.kissParams)?.let { events.send(PortEvent.PortLog("KISS params sent: $it")) }
+
+            val myCallLabel = Ax25Address.parse(config.myCall).label()
+            val driver = KissConnectedModeDriver(this, config.myCall, events, ::writeKiss, KISS_PORT)
+            val framesIn = Channel<Ax25DecodedFrame>(Channel.UNLIMITED)
 
             val readerJob = launch {
                 val decoder = KissDecoder()
@@ -86,6 +96,12 @@ class BluetoothKissRunner(private val config: PortConfig.BluetoothKiss) : PortRu
                             events.send(PortEvent.StationHeard(frame.source.label()))
                             val to = (frame.content as? Ax25FrameContent.UnnumberedInformation)?.let { frame.destination.label() }
                             events.send(PortEvent.Monitor(Ax25.describeFrame(frame), to))
+                            // Only frames actually addressed to us, and never UI (that's Monitor's job
+                            // above, promiscuously) — anything else here would mean answering on behalf
+                            // of some other station's QSO we merely overheard on the shared channel.
+                            if (frame.content !is Ax25FrameContent.UnnumberedInformation && frame.destination.label() == myCallLabel) {
+                                framesIn.send(frame)
+                            }
                         }
                     }
                 } catch (_: IOException) {
@@ -93,32 +109,51 @@ class BluetoothKissRunner(private val config: PortConfig.BluetoothKiss) : PortRu
                 }
             }
 
+            var shouldStop = false
+            var disconnectReason: String? = null
             try {
-                for (command in commands) {
-                    when (command) {
-                        is PortCommand.SendUnproto -> {
-                            val source = Ax25Address.parse(config.myCall)
-                            val destination = Ax25Address.parse(command.dest)
-                            val digis = command.via.map { Ax25Address.parse(it) }
-                            val frame = Ax25.encodeUiFrame(source, destination, digis, info = command.bytes)
-                            writeKiss(Kiss.encodeDataFrame(KISS_PORT, frame))
+                while (!shouldStop) {
+                    select<Unit> {
+                        commands.onReceiveCatching { result ->
+                            val command = result.getOrNull() ?: run { shouldStop = true; return@onReceiveCatching }
+                            when (command) {
+                                PortCommand.Connect -> {} // already connected at construction
+                                is PortCommand.SendUnproto -> {
+                                    val source = Ax25Address.parse(config.myCall)
+                                    val destination = Ax25Address.parse(command.dest)
+                                    val digis = command.via.map { Ax25Address.parse(it) }
+                                    val frame = Ax25.encodeUiFrame(source, destination, digis, info = command.bytes)
+                                    writeKiss(Kiss.encodeDataFrame(KISS_PORT, frame))
 
-                            val viaSuffix = if (command.via.isEmpty()) "" else " via ${command.via.joinToString(",")}"
-                            events.send(
-                                PortEvent.Monitor(
-                                    "${config.myCall} > ${command.dest}$viaSuffix [unproto TX]: ${String(command.bytes)}",
-                                    null,
-                                ),
-                            )
+                                    val viaSuffix = if (command.via.isEmpty()) "" else " via ${command.via.joinToString(",")}"
+                                    events.send(
+                                        PortEvent.Monitor(
+                                            "${config.myCall} > ${command.dest}$viaSuffix [unproto TX]: ${String(command.bytes)}",
+                                            null,
+                                        ),
+                                    )
+                                }
+                                // A lone FEND is a no-op frame delimiter per the KISS spec — every TNC
+                                // just discards it, nothing is transmitted over RF. Only here to make the
+                                // periodic PortManager watchdog's write actually touch the socket.
+                                PortCommand.Probe -> writeKiss(byteArrayOf(Kiss.FEND.toByte()))
+                                is PortCommand.OpenConnection -> driver.openConnection(command.remote, command.via)
+                                is PortCommand.Send -> driver.send(command.id, command.bytes)
+                                is PortCommand.CloseConnection -> driver.closeConnection(command.id)
+                                PortCommand.Disconnect -> shouldStop = true
+                            }
                         }
-                        PortCommand.Disconnect -> break
-                        else -> {} // connected-mode commands: out of scope for bare KISS
+                        framesIn.onReceive { frame -> driver.frameReceived(frame) }
+                        driver.timerFiredEvents.onReceive { id -> driver.onTimerFired(id) }
                     }
                 }
+            } catch (e: IOException) {
+                disconnectReason = e.message ?: "connection lost"
             } finally {
+                driver.shutdown()
                 socket.close()
                 readerJob.cancelAndJoin()
-                events.send(PortEvent.PortDisconnected(null))
+                events.send(PortEvent.PortDisconnected(disconnectReason))
             }
         }
     }
@@ -136,7 +171,17 @@ class BluetoothKissRunner(private val config: PortConfig.BluetoothKiss) : PortRu
      * device; channel 1 is what virtually all of them listen on. Falls back
      * to the UUID-based method if the hidden API is ever unavailable.
      */
-    private fun connectRfcomm(device: BluetoothDevice): BluetoothSocket {
+    /** Which of [connectRfcomm]'s two paths actually got used — surfaced as a [PortEvent.PortLog] line. */
+    private class RfcommConnection(val socket: BluetoothSocket, val viaDirectChannel: Boolean, val directChannelError: String?) {
+        fun describeForLog(): String = if (viaDirectChannel) {
+            "Connected via direct RFCOMM channel $RFCOMM_CHANNEL"
+        } else {
+            val fallback = "Connected via SDP service record lookup"
+            if (directChannelError != null) "$fallback (direct channel $RFCOMM_CHANNEL failed: $directChannelError)" else fallback
+        }
+    }
+
+    private fun connectRfcomm(device: BluetoothDevice): RfcommConnection {
         val direct = try {
             val method = device.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
             method.invoke(device, RFCOMM_CHANNEL) as BluetoothSocket
@@ -146,12 +191,15 @@ class BluetoothKissRunner(private val config: PortConfig.BluetoothKiss) : PortRu
         if (direct != null) {
             try {
                 direct.connect()
-                return direct
+                return RfcommConnection(direct, viaDirectChannel = true, directChannelError = null)
             } catch (e: IOException) {
                 direct.close()
+                val fallback = device.createRfcommSocketToServiceRecord(SPP_UUID).also { it.connect() }
+                return RfcommConnection(fallback, viaDirectChannel = false, directChannelError = e.message)
             }
         }
-        return device.createRfcommSocketToServiceRecord(SPP_UUID).also { it.connect() }
+        val fallback = device.createRfcommSocketToServiceRecord(SPP_UUID).also { it.connect() }
+        return RfcommConnection(fallback, viaDirectChannel = false, directChannelError = null)
     }
 
     private fun sendKissParams(params: KissParams, write: (ByteArray) -> Unit) {
@@ -159,6 +207,16 @@ class BluetoothKissRunner(private val config: PortConfig.BluetoothKiss) : PortRu
         params.persistence?.let { write(Kiss.encodeParamFrame(KISS_PORT, Kiss.CMD_PERSISTENCE, it)) }
         params.slotTime?.let { write(Kiss.encodeParamFrame(KISS_PORT, Kiss.CMD_SLOT_TIME, it)) }
         params.fullDuplex?.let { write(Kiss.encodeParamFrame(KISS_PORT, Kiss.CMD_FULL_DUPLEX, if (it) 1 else 0)) }
+    }
+
+    private fun describeKissParams(params: KissParams): String? {
+        val parts = buildList {
+            params.txDelay?.let { add("TXDELAY=$it") }
+            params.persistence?.let { add("PERSIST=$it") }
+            params.slotTime?.let { add("SLOTTIME=$it") }
+            params.fullDuplex?.let { add("FULLDUP=$it") }
+        }
+        return parts.takeIf { it.isNotEmpty() }?.joinToString(" ")
     }
 
     companion object {

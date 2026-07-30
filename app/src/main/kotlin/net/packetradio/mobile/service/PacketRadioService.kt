@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Intent
 import android.os.Binder
 import android.os.IBinder
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import kotlinx.coroutines.CoroutineScope
@@ -15,7 +16,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import net.packetradio.mobile.MainActivity
+import net.packetradio.mobile.PacketRadioApp
 import net.packetradio.mobile.R
 import net.packetradio.mobile.model.PortEvent
 
@@ -54,8 +57,25 @@ class PacketRadioService : Service() {
         // only the disconnect path happened to call it).
         scope.launch {
             portManager.events.collect { envelope ->
-                if (envelope.event is PortEvent.PortConnected || envelope.event is PortEvent.PortDisconnected) {
+                val event = envelope.event
+                if (event is PortEvent.PortConnected || event is PortEvent.PortDisconnected) {
                     refreshNotification()
+                }
+                // A reason means the periodic watchdog probe (or a write) hit an actual
+                // IOException — the transport genuinely died, as opposed to the user's own
+                // Disconnect/Quit action, which never sets one. That distinction is the whole
+                // point of surfacing this as an interruptive toast rather than just the
+                // passive notification/log-line update every disconnect already gets.
+                if (event is PortEvent.PortDisconnected && event.reason != null) {
+                    val portName = (application as PacketRadioApp).ports.getAll()
+                        .find { it.id == envelope.portId }?.name ?: envelope.portId
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(
+                            this@PacketRadioService,
+                            "Port \"$portName\" unreachable — disconnected (${event.reason})",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
                 }
             }
         }

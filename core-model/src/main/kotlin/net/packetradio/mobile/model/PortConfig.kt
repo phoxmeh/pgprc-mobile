@@ -106,8 +106,17 @@ fun PortConfig.kindLabel(): String = when (this) {
     is PortConfig.UsbSerialKiss -> "KISS (USB)"
 }
 
-/** Whether this port kind supports opening a connected-mode session by node callsign. */
-fun PortConfig.supportsConnect(): Boolean = this is PortConfig.Agwpe
+/**
+ * Whether this port kind supports opening a connected-mode session by node callsign. AGWPE
+ * offloads the AX.25 ARQ state machine to the host software (Direwolf, UZ7HO SoundModem);
+ * KISS-TCP and Bluetooth KISS drive it themselves client-side (see
+ * `net.packetradio.mobile.protocol.Ax25LinkSession`). USB-serial KISS isn't wired up to either
+ * yet — its `PortRunner` doesn't exist at all — so it stays excluded until that lands.
+ */
+fun PortConfig.supportsConnect(): Boolean = when (this) {
+    is PortConfig.Agwpe, is PortConfig.KissTcp, is PortConfig.BluetoothKiss -> true
+    is PortConfig.Telnet, is PortConfig.Ssh, is PortConfig.UsbSerialKiss -> false
+}
 
 /** Whether this port kind can send one-shot unconnected (UI) frames. */
 fun PortConfig.supportsUnproto(): Boolean = when (this) {

@@ -65,11 +65,14 @@ object Ax25 {
     private const val CONTROL_FRMR = 0x87
     private const val PF_BIT = 0x10
 
+    // S-frame type-code (control bits 2-3): 0=RR, 1=RNR, 2=REJ, 3=SREJ (AX.25 2.2 only, unused here).
+    private const val SS_RR = 0
+    private const val SS_REJ = 2
+
     /**
      * Encodes a UI (unproto) frame: destination, source, then up to 8
-     * digipeaters, control byte 0x03, [pid], then [info]. This is the only
-     * frame type this app ever originates (connected mode is always owned
-     * by the AGWPE host or not implemented, same as the desktop app).
+     * digipeaters, control byte 0x03, [pid], then [info]. UI is always a
+     * command frame per spec (see [encodeAddressChain]).
      */
     fun encodeUiFrame(
         source: Ax25Address,
@@ -78,27 +81,123 @@ object Ax25 {
         pid: Int = 0xF0,
         info: ByteArray,
     ): ByteArray {
-        val chain = buildList {
-            add(destination)
-            add(source)
-            addAll(digipeaters)
-        }
         val out = java.io.ByteArrayOutputStream()
-        chain.forEachIndexed { index, addr -> out.write(encodeAddress(addr, isLast = index == chain.lastIndex)) }
+        out.write(encodeAddressChain(destination, source, digipeaters, command = true))
         out.write(CONTROL_UI)
         out.write(pid and 0xFF)
         out.write(info)
         return out.toByteArray()
     }
 
-    private fun encodeAddress(address: Ax25Address, isLast: Boolean): ByteArray {
+    /** An I-frame: N(S)/N(R)-sequenced data, only meaningful once a connected-mode link is up. */
+    fun encodeInformation(
+        source: Ax25Address,
+        destination: Ax25Address,
+        digipeaters: List<Ax25Address> = emptyList(),
+        ns: Int,
+        nr: Int,
+        pollFinal: Boolean = false,
+        pid: Int = 0xF0,
+        info: ByteArray,
+    ): ByteArray {
+        val control = ((ns and 0x07) shl 1) or (if (pollFinal) PF_BIT else 0) or ((nr and 0x07) shl 5)
+        val out = java.io.ByteArrayOutputStream()
+        out.write(encodeAddressChain(destination, source, digipeaters, command = true))
+        out.write(control and 0xFF)
+        out.write(pid and 0xFF)
+        out.write(info)
+        return out.toByteArray()
+    }
+
+    /** Connect request — always a command, P-bit always set (universal TNC convention). */
+    fun encodeSabm(source: Ax25Address, destination: Ax25Address, digipeaters: List<Ax25Address> = emptyList()): ByteArray =
+        encodeControlOnlyFrame(source, destination, digipeaters, CONTROL_SABM or PF_BIT, command = true)
+
+    /** Disconnect request — always a command, P-bit always set. */
+    fun encodeDisc(source: Ax25Address, destination: Ax25Address, digipeaters: List<Ax25Address> = emptyList()): ByteArray =
+        encodeControlOnlyFrame(source, destination, digipeaters, CONTROL_DISC or PF_BIT, command = true)
+
+    /**
+     * Accepts a connect/disconnect request — always a response. F-bit always set: this
+     * always mirrors a P=1 SABM/DISC (every TNC in practice sets P=1 on those), so there's
+     * no incoming P value worth threading through here.
+     */
+    fun encodeUa(source: Ax25Address, destination: Ax25Address, digipeaters: List<Ax25Address> = emptyList()): ByteArray =
+        encodeControlOnlyFrame(source, destination, digipeaters, CONTROL_UA or PF_BIT, command = false)
+
+    /** Refuses a connect request, or reports "no such link" — always a response. */
+    fun encodeDm(source: Ax25Address, destination: Ax25Address, digipeaters: List<Ax25Address> = emptyList()): ByteArray =
+        encodeControlOnlyFrame(source, destination, digipeaters, CONTROL_DM or PF_BIT, command = false)
+
+    /** Acknowledges up to N(R); [command] is only ever `false` in this app — see [Ax25LinkSession]. */
+    fun encodeReceiveReady(
+        source: Ax25Address,
+        destination: Ax25Address,
+        digipeaters: List<Ax25Address> = emptyList(),
+        nr: Int,
+        pollFinal: Boolean,
+        command: Boolean,
+    ): ByteArray = encodeControlOnlyFrame(source, destination, digipeaters, sFrameControl(SS_RR, nr, pollFinal), command)
+
+    /** Requests retransmission starting at N(R); [command] is only ever `false` in this app. */
+    fun encodeReject(
+        source: Ax25Address,
+        destination: Ax25Address,
+        digipeaters: List<Ax25Address> = emptyList(),
+        nr: Int,
+        pollFinal: Boolean,
+        command: Boolean,
+    ): ByteArray = encodeControlOnlyFrame(source, destination, digipeaters, sFrameControl(SS_REJ, nr, pollFinal), command)
+
+    private fun sFrameControl(sType: Int, nr: Int, pollFinal: Boolean): Int =
+        0x01 or (sType shl 2) or (if (pollFinal) PF_BIT else 0) or ((nr and 0x07) shl 5)
+
+    private fun encodeControlOnlyFrame(
+        source: Ax25Address,
+        destination: Ax25Address,
+        digipeaters: List<Ax25Address>,
+        control: Int,
+        command: Boolean,
+    ): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        out.write(encodeAddressChain(destination, source, digipeaters, command))
+        out.write(control and 0xFF)
+        return out.toByteArray()
+    }
+
+    /**
+     * Builds the destination/source/digipeater address chain with the command/response (C)
+     * bit set correctly: 1 on the destination and 0 on the source for a command frame, and
+     * the mirror image for a response — digipeater addresses never carry it (that bit
+     * position is their unrelated has-been-repeated flag, which this app, never itself a
+     * digipeater, never sets).
+     */
+    private fun encodeAddressChain(
+        destination: Ax25Address,
+        source: Ax25Address,
+        digipeaters: List<Ax25Address>,
+        command: Boolean,
+    ): ByteArray {
+        val chain = buildList {
+            add(destination to command)
+            add(source to !command)
+            addAll(digipeaters.map { it to false })
+        }
+        val out = java.io.ByteArrayOutputStream()
+        chain.forEachIndexed { index, (addr, cBit) ->
+            out.write(encodeAddress(addr, isLast = index == chain.lastIndex, cBit = cBit))
+        }
+        return out.toByteArray()
+    }
+
+    private fun encodeAddress(address: Ax25Address, isLast: Boolean, cBit: Boolean): ByteArray {
         val call = address.callsign.uppercase().take(6).padEnd(6)
         val out = ByteArray(ADDRESS_LEN)
         for (i in 0 until 6) out[i] = ((call[i].code shl 1) and 0xFF).toByte()
-        // Bits 5-6 set per convention (most AX.25 stacks leave the
-        // command/response and has-been-repeated bits at their reserved-1
-        // default when originating a frame); bit0 marks the last address.
+        // Bits 5-6 set per convention (reserved, left at their default); bit 7 is the C-bit;
+        // bit0 marks the last address.
         var ssidByte = 0x60 or ((address.ssid and 0x0F) shl 1)
+        if (cBit) ssidByte = ssidByte or 0x80
         if (isLast) ssidByte = ssidByte or 0x01
         out[6] = ssidByte.toByte()
         return out
@@ -146,10 +245,14 @@ object Ax25 {
                 val sType = (control shr 2) and 0x03
                 val pf = (control and PF_BIT) != 0
                 val nr = (control shr 5) and 0x07
+                // Bug fix: this used to map 1->Reject and 2->ReceiveNotReady, backwards from the
+                // real AX.25 S-frame type-code assignment (RR=0, RNR=1, REJ=2) — confirmed against
+                // the canonical control-byte values (RR=0x01, RNR=0x05, REJ=0x09 at N(R)=0). Any
+                // real RNR/REJ frame from a peer was mislabeled in the Monitor view until now.
                 when (sType) {
                     0 -> Ax25FrameContent.ReceiveReady(nr, pf)
-                    1 -> Ax25FrameContent.Reject(nr, pf)
-                    2 -> Ax25FrameContent.ReceiveNotReady(nr, pf)
+                    1 -> Ax25FrameContent.ReceiveNotReady(nr, pf)
+                    2 -> Ax25FrameContent.Reject(nr, pf)
                     else -> Ax25FrameContent.Unknown(control)
                 }
             }

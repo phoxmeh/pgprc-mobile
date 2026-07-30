@@ -68,11 +68,16 @@ class SessionViewModel(application: Application) : AndroidViewModel(application)
     private val _selectedTabId = MutableStateFlow<String?>(null)
     val selectedTabId: StateFlow<String?> = _selectedTabId.asStateFlow()
 
-    private val _monitorLines = MutableStateFlow<List<String>>(emptyList())
-    val monitorLines: StateFlow<List<String>> = _monitorLines.asStateFlow()
+    private val _monitorLines = MutableStateFlow<List<MonitorLine>>(emptyList())
+    val monitorLines: StateFlow<List<MonitorLine>> = _monitorLines.asStateFlow()
 
     private val _monitorFilter = MutableStateFlow("")
     val monitorFilter: StateFlow<String> = _monitorFilter.asStateFlow()
+
+    /** Default on: connected-mode chatter (SABM/UA/RR/REJ/I-frames) is mostly debugging noise
+     *  next to the UI/unproto traffic the Monitor screen exists to show. */
+    private val _unprotoOnly = MutableStateFlow(true)
+    val unprotoOnly: StateFlow<Boolean> = _unprotoOnly.asStateFlow()
 
     /** Port connect/disconnect/error and AX.25 connection-state noise — kept out of [monitorLines],
      *  which is packet traffic only, mirroring the desktop's Monitor/Log split. */
@@ -256,7 +261,12 @@ class SessionViewModel(application: Application) : AndroidViewModel(application)
         val connectionId = tab.connectionId ?: return
         val text = tab.inputText
         if (text.isBlank()) return
-        val bytes = text.toByteArray()
+        // Packet BBS/node command parsers (like the one in the user's own bug report — a classic
+        // "ENTER COMMAND: B,C,J,N" menu node) only act on a line once they see its trailing CR;
+        // without it, a sent command just sits in their input buffer forever, acked at the AX.25
+        // layer (a normal RR) but never actually processed — indistinguishable from "did nothing"
+        // from here except that the RR's N(R) keeps advancing normally.
+        val bytes = (text + "\r").toByteArray()
 
         viewModelScope.launch { svc.portManager.sendCommand(port.id, PortCommand.Send(connectionId, bytes)) }
         updateTab(tabId) {
@@ -333,11 +343,17 @@ class SessionViewModel(application: Application) : AndroidViewModel(application)
         _logFilter.value = text
     }
 
+    fun setUnprotoOnly(value: Boolean) {
+        _unprotoOnly.value = value
+    }
+
     // --- Event routing ---------------------------------------------------
 
     private fun handleEvent(portId: String, event: PortEvent) {
         when (event) {
-            is PortEvent.Monitor -> appendMonitorLine("[${portLabel(portId)}] ${event.line}")
+            is PortEvent.Monitor -> appendMonitorLine(
+                MonitorLine("[${portLabel(portId)}] ${event.line}", unproto = event.to != null),
+            )
             PortEvent.PortConnected -> {
                 _portStatuses.update { it + (portId to PortStatus.CONNECTED) }
                 appendLogLine("[${portLabel(portId)}] Port connected")
@@ -345,13 +361,15 @@ class SessionViewModel(application: Application) : AndroidViewModel(application)
             }
             is PortEvent.PortDisconnected -> {
                 _portStatuses.update { it + (portId to PortStatus.OFF) }
-                appendLogLine("[${portLabel(portId)}] Port disconnected")
+                val suffix = event.reason?.let { ": $it" }.orEmpty()
+                appendLogLine("[${portLabel(portId)}] Port disconnected$suffix")
                 clearBoundConnectionsForPort(portId)
             }
             is PortEvent.PortError -> {
                 _portStatuses.update { it + (portId to PortStatus.ERROR) }
                 appendLogLine("[${portLabel(portId)}] ERROR: ${event.message}")
             }
+            is PortEvent.PortLog -> appendLogLine("[${portLabel(portId)}] ${event.message}")
             is PortEvent.ConnectionOpened -> {
                 val tabId = pendingOpens.remove(portId to event.label) ?: return
                 boundConnections[portId to event.id] = tabId
@@ -437,7 +455,7 @@ class SessionViewModel(application: Application) : AndroidViewModel(application)
         return if (index >= 0) index.toString() else portId
     }
 
-    private fun appendMonitorLine(line: String) {
+    private fun appendMonitorLine(line: MonitorLine) {
         _monitorLines.update { (it + line).takeLast(MONITOR_BUFFER_LINES) }
     }
 

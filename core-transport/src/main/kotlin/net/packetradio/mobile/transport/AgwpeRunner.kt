@@ -72,10 +72,17 @@ class AgwpeRunner(private val config: PortConfig.Agwpe) : PortRunner {
                 }
             }
 
+            var disconnectReason: String? = null
             try {
                 for (command in commands) {
                     when (command) {
                         PortCommand.Connect -> {} // already connected at construction
+                        // Re-sends the same 'G' port-info query issued once at connect — an
+                        // AGWPE-local control frame, never anything that reaches the radio, so
+                        // it's a safe periodic no-op for the PortManager watchdog. A real AGWPE
+                        // server also replies to it, which surfaces in the Monitor via 'G'
+                        // handling below.
+                        PortCommand.Probe -> writeFrame(AgwFrame.create(config.radioPort, 'G', "", "", ByteArray(0)))
                         PortCommand.Disconnect -> break
                         is PortCommand.OpenConnection -> {
                             val id = connMap.idFor(command.remote)
@@ -113,10 +120,12 @@ class AgwpeRunner(private val config: PortConfig.Agwpe) : PortRunner {
                         }
                     }
                 }
+            } catch (e: IOException) {
+                disconnectReason = e.message ?: "connection lost"
             } finally {
                 socket.close()
                 readerJob.cancelAndJoin()
-                events.send(PortEvent.PortDisconnected(null))
+                events.send(PortEvent.PortDisconnected(disconnectReason))
             }
         }
     }

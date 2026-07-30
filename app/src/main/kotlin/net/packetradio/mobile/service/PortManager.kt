@@ -3,9 +3,11 @@ package net.packetradio.mobile.service
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import net.packetradio.mobile.model.PortCommand
 import net.packetradio.mobile.model.PortConfig
@@ -67,9 +69,21 @@ class PortManager(private val scope: CoroutineScope) {
                     _events.emit(PortEventEnvelope(portId, event))
                 }
             }
+            // Silent liveness check: a dead USB/Bluetooth/TCP link often surfaces no error at
+            // all until something is next written to it — packet radio traffic can otherwise go
+            // quiet for very long, legitimate stretches, so idle time alone is never a signal.
+            // Runs for as long as the port is connected; the resulting IOException (if any)
+            // reaches PortEvent.PortDisconnected via each PortRunner's own catch block.
+            val watchdog = launch {
+                while (isActive) {
+                    delay(PROBE_INTERVAL_MS)
+                    if (entry.connected) entry.commands.trySend(PortCommand.Probe)
+                }
+            }
             try {
                 runner.run(commands, portEvents)
             } finally {
+                watchdog.cancel()
                 portEvents.close()
                 forwarder.join()
                 entries.remove(portId)
@@ -91,5 +105,9 @@ class PortManager(private val scope: CoroutineScope) {
     /** Best-effort — used when the whole service is going away. */
     fun disconnectAll() {
         entries.values.forEach { it.commands.trySend(PortCommand.Disconnect) }
+    }
+
+    private companion object {
+        const val PROBE_INTERVAL_MS = 60_000L
     }
 }

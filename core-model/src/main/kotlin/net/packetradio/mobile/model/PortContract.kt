@@ -23,6 +23,14 @@ sealed interface PortEvent {
     data class PortError(val message: String) : PortEvent
 
     /**
+     * A free-form, non-error debugging detail about the port's own connection process (which
+     * RFCOMM method was used, KISS params actually sent, etc.) — routed to the Log tab like
+     * [PortConnected]/[PortDisconnected], but for the "how did it get there" detail those don't
+     * carry, without misrepresenting it as an error via [PortError].
+     */
+    data class PortLog(val message: String) : PortEvent
+
+    /**
      * One line of raw port/frame activity for the Monitor view.
      * [to] is the destination callsign when this frame is "directed" (e.g. a
      * UI/unproto frame or an incoming connection) and `null` otherwise —
@@ -55,6 +63,17 @@ sealed interface PortEvent {
 sealed interface PortCommand {
     data object Connect : PortCommand
     data object Disconnect : PortCommand
+
+    /**
+     * A periodic, silent liveness check on the underlying transport (see
+     * [net.packetradio.mobile.service.PortManager]) — never anything that
+     * would key up a transmitter or reach the remote station. Each runner
+     * answers with whatever no-op write its transport supports; an
+     * [java.io.IOException] out of that write means the link (USB/Bluetooth/
+     * TCP socket to the TNC) is actually gone, not just radio-silent.
+     */
+    data object Probe : PortCommand
+
     data class OpenConnection(val remote: String, val via: List<String>) : PortCommand
     data class CloseConnection(val id: ConnectionId) : PortCommand
 

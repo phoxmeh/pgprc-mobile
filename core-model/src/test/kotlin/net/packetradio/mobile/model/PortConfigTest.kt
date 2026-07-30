@@ -44,15 +44,22 @@ class PortConfigTest {
     }
 
     @Test
-    fun `port kind predicates match desktop semantics`() {
+    fun `port kind predicates`() {
         val agwpe = PortConfig.Agwpe("h", 1, 0, "C")
         val kissTcp = PortConfig.KissTcp("h", 1, "C")
+        val bluetoothKiss = PortConfig.BluetoothKiss("AA:BB:CC:DD:EE:FF", "TNC", "C")
+        val usbSerialKiss = PortConfig.UsbSerialKiss(0, 0, 9600, "C")
         val telnet = PortConfig.Telnet("h", 1)
 
         assertEquals(true, agwpe.supportsConnect())
         assertEquals(true, agwpe.supportsUnproto())
-        assertEquals(false, kissTcp.supportsConnect())
+        // Unlike the desktop app this was ported from, KISS-TCP and Bluetooth KISS drive AX.25
+        // connected mode client-side here (Ax25LinkSession) rather than leaving it unimplemented.
+        assertEquals(true, kissTcp.supportsConnect())
         assertEquals(true, kissTcp.supportsUnproto())
+        assertEquals(true, bluetoothKiss.supportsConnect())
+        // USB-serial KISS has no PortRunner at all yet, so it stays excluded until that lands.
+        assertEquals(false, usbSerialKiss.supportsConnect())
         assertEquals(false, telnet.needsNode())
     }
 }

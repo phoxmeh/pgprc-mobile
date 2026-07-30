@@ -2,6 +2,8 @@
 
 package net.packetradio.mobile.ui.session
 
+import android.app.Activity
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
@@ -41,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
@@ -61,6 +64,7 @@ fun SessionScreen(onOpenSettings: () -> Unit, onQuit: () -> Unit, viewModel: Ses
     val selectedTabId by viewModel.selectedTabId.collectAsState()
     val monitorLines by viewModel.monitorLines.collectAsState()
     val monitorFilter by viewModel.monitorFilter.collectAsState()
+    val unprotoOnly by viewModel.unprotoOnly.collectAsState()
     val logLines by viewModel.logLines.collectAsState()
     val logFilter by viewModel.logFilter.collectAsState()
     val adHoc by viewModel.adHoc.collectAsState()
@@ -72,6 +76,20 @@ fun SessionScreen(onOpenSettings: () -> Unit, onQuit: () -> Unit, viewModel: Ses
     var rightDrawerOpen by remember { mutableStateOf(false) }
     var showDialDialog by remember { mutableStateOf(false) }
     var filterVisible by remember { mutableStateOf(false) }
+
+    // This is the nav graph's root with nothing to pop back to, so system Back would otherwise
+    // fall through to Android's default: finish the Activity. Finishing the task's only Activity
+    // also removes the task itself — indistinguishable from swiping the app away in Recents,
+    // which is exactly what triggers the service's onTaskRemoved (drops every port/session). Back
+    // should behave like Home instead: close an open drawer first, or just background the app.
+    val activity = LocalContext.current as? Activity
+    BackHandler {
+        when {
+            leftDrawerOpen -> leftDrawerOpen = false
+            rightDrawerOpen -> rightDrawerOpen = false
+            else -> activity?.moveTaskToBack(true)
+        }
+    }
 
     val frontId = selectedTabId ?: MONITOR_TAB_ID
     val frontTab = tabs.find { it.id == frontId }
@@ -118,6 +136,8 @@ fun SessionScreen(onOpenSettings: () -> Unit, onQuit: () -> Unit, viewModel: Ses
                                 myCall,
                                 highlightPrefs,
                                 showFilter = filterVisible,
+                                unprotoOnly = unprotoOnly,
+                                onUnprotoOnlyChanged = viewModel::setUnprotoOnly,
                                 modifier = Modifier.weight(1f),
                             )
                             AdHocUnprotoBar(
@@ -132,7 +152,7 @@ fun SessionScreen(onOpenSettings: () -> Unit, onQuit: () -> Unit, viewModel: Ses
                         }
                     }
                     frontId == LOG_TAB_ID -> MonitorContent(
-                        logLines,
+                        remember(logLines) { logLines.map { MonitorLine(it) } },
                         logFilter,
                         viewModel::setLogFilter,
                         myCall,
