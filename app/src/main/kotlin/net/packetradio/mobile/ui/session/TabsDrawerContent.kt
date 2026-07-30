@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -41,10 +42,11 @@ import net.packetradio.mobile.model.PortEntry
 private const val CONFIRM_CLOSE_TIMEOUT_MS = 3000L
 
 /**
- * The left-hand drawer's content: the "+"/add-tab action, the always-present
- * non-closable Monitor entry, then every open tab (pin icon when pinned,
- * `n:node` name, tap-and-hold to pin, tap-X-twice to close), and a Settings
- * entry pinned to the bottom.
+ * The left-hand drawer's content: the "+"/dial action (opens [DialDialog] —
+ * dialing is the only way a new tab is ever created now), the always-present
+ * non-closable Monitor and Log entries, then every dialed tab (pin icon when
+ * pinned, `n:node` name, tap-and-hold to pin, tap-X-twice to close), and
+ * Quit/Settings entries pinned to the bottom.
  */
 @Composable
 fun TabsDrawerContent(
@@ -52,11 +54,13 @@ fun TabsDrawerContent(
     ports: List<PortEntry>,
     frontId: String,
     monitorTabId: String,
+    logTabId: String,
     onSelectTab: (String) -> Unit,
-    onAddTab: () -> Unit,
+    onDial: () -> Unit,
     onCloseTab: (String) -> Unit,
     onTogglePin: (String) -> Unit,
     onOpenSettings: () -> Unit,
+    onQuit: () -> Unit,
 ) {
     val orderedTabs = remember(tabs) { tabs.sortedByDescending { it.pinned } }
 
@@ -67,8 +71,8 @@ fun TabsDrawerContent(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("Sessions", style = MaterialTheme.typography.titleLarge)
-            IconButton(onClick = onAddTab) {
-                Icon(Icons.Filled.Add, contentDescription = "New tab")
+            IconButton(onClick = onDial) {
+                Icon(Icons.Filled.Add, contentDescription = "Dial a station")
             }
         }
 
@@ -76,6 +80,11 @@ fun TabsDrawerContent(
             label = "Monitor",
             selected = frontId == monitorTabId,
             onClick = { onSelectTab(monitorTabId) },
+        )
+        DrawerRow(
+            label = "Log",
+            selected = frontId == logTabId,
+            onClick = { onSelectTab(logTabId) },
         )
         HorizontalDivider(Modifier.padding(vertical = 4.dp))
 
@@ -93,12 +102,20 @@ fun TabsDrawerContent(
         }
 
         HorizontalDivider(Modifier.padding(vertical = 4.dp))
-        DrawerRow(
-            label = "Settings",
-            selected = false,
-            leadingIcon = Icons.Filled.Settings,
-            onClick = onOpenSettings,
-        )
+        Column(Modifier.padding(bottom = 12.dp)) {
+            DrawerRow(
+                label = "Quit",
+                selected = false,
+                leadingIcon = Icons.AutoMirrored.Filled.ExitToApp,
+                onClick = onQuit,
+            )
+            DrawerRow(
+                label = "Settings",
+                selected = false,
+                leadingIcon = Icons.Filled.Settings,
+                onClick = onOpenSettings,
+            )
+        }
     }
 }
 

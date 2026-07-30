@@ -10,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,9 +21,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FilterAlt
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -47,11 +48,12 @@ import net.packetradio.mobile.model.ConnState
 import net.packetradio.mobile.ui.ports.PortsDrawerContent
 
 private const val MONITOR_TAB_ID = "__monitor__"
+private const val LOG_TAB_ID = "__log__"
 private val ConnectedGreen = Color(0xFF2E7D32)
 private val DrawerWidth = 300.dp
 
 @Composable
-fun SessionScreen(onOpenSettings: () -> Unit, viewModel: SessionViewModel = viewModel()) {
+fun SessionScreen(onOpenSettings: () -> Unit, onQuit: () -> Unit, viewModel: SessionViewModel = viewModel()) {
     LaunchedEffect(Unit) { viewModel.bindService() }
 
     val ports by viewModel.ports.collectAsState()
@@ -59,14 +61,25 @@ fun SessionScreen(onOpenSettings: () -> Unit, viewModel: SessionViewModel = view
     val selectedTabId by viewModel.selectedTabId.collectAsState()
     val monitorLines by viewModel.monitorLines.collectAsState()
     val monitorFilter by viewModel.monitorFilter.collectAsState()
+    val logLines by viewModel.logLines.collectAsState()
+    val logFilter by viewModel.logFilter.collectAsState()
+    val adHoc by viewModel.adHoc.collectAsState()
     val portStatuses by viewModel.portStatuses.collectAsState()
+    val highlightPrefs by viewModel.highlightPrefs.collectAsState()
+    val myCall by viewModel.myCall.collectAsState()
 
     var leftDrawerOpen by remember { mutableStateOf(false) }
     var rightDrawerOpen by remember { mutableStateOf(false) }
+    var showDialDialog by remember { mutableStateOf(false) }
+    var filterVisible by remember { mutableStateOf(false) }
 
     val frontId = selectedTabId ?: MONITOR_TAB_ID
     val frontTab = tabs.find { it.id == frontId }
-    val title = if (frontId == MONITOR_TAB_ID) "Monitor" else frontTab?.tabName(ports) ?: "PGPRC Mobile"
+    val title = when (frontId) {
+        MONITOR_TAB_ID -> "Monitor"
+        LOG_TAB_ID -> "Log"
+        else -> frontTab?.tabName(ports) ?: "PGPRC Mobile"
+    }
 
     Box(Modifier.fillMaxSize()) {
         Scaffold(
@@ -80,13 +93,9 @@ fun SessionScreen(onOpenSettings: () -> Unit, viewModel: SessionViewModel = view
                     },
                     title = { Text(title) },
                     actions = {
-                        if (frontTab != null) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Checkbox(
-                                    checked = frontTab.unproto,
-                                    onCheckedChange = { viewModel.setTabUnproto(frontTab.id, it) },
-                                )
-                                Text("Unproto")
+                        if (frontId == MONITOR_TAB_ID || frontId == LOG_TAB_ID) {
+                            IconButton(onClick = { filterVisible = !filterVisible }) {
+                                Icon(Icons.Filled.FilterAlt, contentDescription = "Toggle filter")
                             }
                         }
                         IconButton(onClick = { rightDrawerOpen = true; leftDrawerOpen = false }) {
@@ -98,17 +107,44 @@ fun SessionScreen(onOpenSettings: () -> Unit, viewModel: SessionViewModel = view
             bottomBar = { StatusBar(frontTab) },
         ) { innerPadding ->
             Box(Modifier.padding(innerPadding).fillMaxSize()) {
-                if (frontId == MONITOR_TAB_ID) {
-                    MonitorContent(monitorLines, monitorFilter, viewModel::setMonitorFilter)
-                } else if (frontTab != null) {
-                    SessionTabContent(
+                when {
+                    frontId == MONITOR_TAB_ID -> {
+                        ClearFocusWhenKeyboardHides()
+                        Column(Modifier.fillMaxSize().padding(12.dp).clearFocusOnTapOutside()) {
+                            MonitorContent(
+                                monitorLines,
+                                monitorFilter,
+                                viewModel::setMonitorFilter,
+                                myCall,
+                                highlightPrefs,
+                                showFilter = filterVisible,
+                                modifier = Modifier.weight(1f),
+                            )
+                            AdHocUnprotoBar(
+                                ports = ports,
+                                state = adHoc,
+                                onPortSelected = viewModel::setAdHocPort,
+                                onNodeChanged = viewModel::setAdHocNode,
+                                onViaChanged = viewModel::setAdHocVia,
+                                onInputChanged = viewModel::setAdHocInput,
+                                onSend = viewModel::sendAdHoc,
+                            )
+                        }
+                    }
+                    frontId == LOG_TAB_ID -> MonitorContent(
+                        logLines,
+                        logFilter,
+                        viewModel::setLogFilter,
+                        myCall,
+                        highlightPrefs,
+                        showFilter = filterVisible,
+                    )
+                    frontTab != null -> SessionTabContent(
                         tab = frontTab,
-                        ports = ports,
                         monitorLines = monitorLines,
                         portConnected = portStatuses[frontTab.portId] == PortStatus.CONNECTED,
-                        onPortSelected = { viewModel.setTabPort(frontTab.id, it) },
-                        onNodeChanged = { viewModel.setTabNode(frontTab.id, it) },
-                        onViaChanged = { viewModel.setTabVia(frontTab.id, it) },
+                        myCall = myCall,
+                        highlightPrefs = highlightPrefs,
                         onToggleNodeConnection = { viewModel.toggleNodeConnection(frontTab.id) },
                         onInputChanged = { viewModel.setTabInput(frontTab.id, it) },
                         onSend = { viewModel.sendTabInput(frontTab.id) },
@@ -132,13 +168,26 @@ fun SessionScreen(onOpenSettings: () -> Unit, viewModel: SessionViewModel = view
                     ports = ports,
                     frontId = frontId,
                     monitorTabId = MONITOR_TAB_ID,
+                    logTabId = LOG_TAB_ID,
                     onSelectTab = { viewModel.selectTab(it); leftDrawerOpen = false },
-                    onAddTab = { viewModel.addTab(); leftDrawerOpen = false },
+                    onDial = { showDialDialog = true; leftDrawerOpen = false },
                     onCloseTab = viewModel::closeTab,
                     onTogglePin = viewModel::togglePin,
                     onOpenSettings = { leftDrawerOpen = false; onOpenSettings() },
+                    onQuit = { viewModel.quit(); onQuit() },
                 )
             }
+        }
+
+        if (showDialDialog) {
+            DialDialog(
+                ports = ports,
+                onDismiss = { showDialDialog = false },
+                onDial = { portId, node, via, connectImmediately ->
+                    viewModel.dialTab(portId, node, via, connectImmediately)
+                    showDialDialog = false
+                },
+            )
         }
 
         if (rightDrawerOpen) {
@@ -180,15 +229,13 @@ private fun Scrim(onClick: () -> Unit) {
  * Reports node-level connection state only — a real AX.25 connect
  * (`connectionId`/`connState == CONNECTED`), timed since it was established.
  * Deliberately unrelated to the underlying port's own connect state (that's
- * the Ports drawer's job) and never shown at all for an Unproto tab, which
- * has no two-way "connection" concept to report on.
+ * the Ports drawer's job).
  */
 @Composable
 private fun StatusBar(tab: SessionTabState?) {
-    val connected = tab != null && !tab.unproto && tab.connectionId != null && tab.connState == ConnState.CONNECTED
+    val connected = tab != null && tab.connectionId != null && tab.connState == ConnState.CONNECTED
     val label = when {
         tab == null -> "No tab selected"
-        tab.unproto -> ""
         connected -> "Connected" + connectedDuration(tab.connectedSinceMillis)?.let { " $it" }.orEmpty()
         tab.connState == ConnState.CONNECTING -> "Connecting…"
         else -> "Disconnected"

@@ -31,6 +31,7 @@ class AppPreferences(private val context: Context) {
         val SHOW_MONITOR = booleanPreferencesKey("ui_show_monitor")
         val FONT = stringPreferencesKey("ui_font")
         val SHOW_TIMESTAMPS = booleanPreferencesKey("ui_show_timestamps")
+        val OPERATOR_NAME = stringPreferencesKey("ui_operator_name")
         val DEFAULT_CALL = stringPreferencesKey("ui_default_call")
         val LOCATION = stringPreferencesKey("ui_location")
         val HOME_SERVER = stringPreferencesKey("ui_home_server")
@@ -55,6 +56,7 @@ class AppPreferences(private val context: Context) {
             showMonitor = prefs[Keys.SHOW_MONITOR] ?: defaults.showMonitor,
             font = prefs[Keys.FONT] ?: defaults.font,
             showTimestamps = prefs[Keys.SHOW_TIMESTAMPS] ?: defaults.showTimestamps,
+            operatorName = prefs[Keys.OPERATOR_NAME] ?: defaults.operatorName,
             defaultCall = prefs[Keys.DEFAULT_CALL] ?: defaults.defaultCall,
             location = prefs[Keys.LOCATION] ?: defaults.location,
             homeServer = prefs[Keys.HOME_SERVER] ?: defaults.homeServer,
@@ -72,6 +74,7 @@ class AppPreferences(private val context: Context) {
             prefs[Keys.SHOW_MONITOR] = updated.showMonitor
             setOrRemove(prefs, Keys.FONT, updated.font)
             prefs[Keys.SHOW_TIMESTAMPS] = updated.showTimestamps
+            setOrRemove(prefs, Keys.OPERATOR_NAME, updated.operatorName)
             setOrRemove(prefs, Keys.DEFAULT_CALL, updated.defaultCall)
             setOrRemove(prefs, Keys.LOCATION, updated.location)
             setOrRemove(prefs, Keys.HOME_SERVER, updated.homeServer)

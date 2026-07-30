@@ -11,6 +11,7 @@ data class UiPrefs(
     val showMonitor: Boolean = true,
     val font: String? = null,
     val showTimestamps: Boolean = true,
+    val operatorName: String? = null,
     val defaultCall: String? = null,
     val location: String? = null,
     /**

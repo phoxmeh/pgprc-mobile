@@ -1,0 +1,24 @@
+# Components
+
+- **BluetoothDevicePicker** [client] — props: selectedAddress, selectedName, address, name — `app/src/main/kotlin/net/packetradio/mobile/ui/ports/BluetoothDevicePicker.kt`
+- **PortFormDialog** [client] — props: initial, onDismiss — `app/src/main/kotlin/net/packetradio/mobile/ui/ports/PortFormDialog.kt`
+- **KindDropdown** [client] — props: selected, onSelected — `app/src/main/kotlin/net/packetradio/mobile/ui/ports/PortFormDialog.kt`
+- **PortsDrawerContent** [client] — props: ports, portStatuses, onTogglePort — `app/src/main/kotlin/net/packetradio/mobile/ui/ports/PortsDrawerContent.kt`
+- **PortToggleRow** [client] — props: index, entry, status, isFirst, isLast, onToggle — `app/src/main/kotlin/net/packetradio/mobile/ui/ports/PortsDrawerContent.kt`
+- **AdHocUnprotoBar** [client] — props: ports, state, onPortSelected — `app/src/main/kotlin/net/packetradio/mobile/ui/session/AdHocUnprotoBar.kt`
+- **AdHocPortDropdown** [client] — props: ports, selected, onPortSelected — `app/src/main/kotlin/net/packetradio/mobile/ui/session/AdHocUnprotoBar.kt`
+- **DialDialog** [client] — props: ports, onDismiss — `app/src/main/kotlin/net/packetradio/mobile/ui/session/DialDialog.kt`
+- **PortDropdown** [client] — props: ports, selectedId, onSelected — `app/src/main/kotlin/net/packetradio/mobile/ui/session/DialDialog.kt`
+- **ClearFocusWhenKeyboardHides** [client] — `app/src/main/kotlin/net/packetradio/mobile/ui/session/Focus.kt`
+- **MonitorContent** [client] — props: lines, filter, onFilterChanged — `app/src/main/kotlin/net/packetradio/mobile/ui/session/MonitorContent.kt`
+- **SessionScreen** [client] — props: onOpenSettings — `app/src/main/kotlin/net/packetradio/mobile/ui/session/SessionScreen.kt`
+- **Scrim** [client] — props: onClick — `app/src/main/kotlin/net/packetradio/mobile/ui/session/SessionScreen.kt`
+- **StatusBar** [client] — props: tab — `app/src/main/kotlin/net/packetradio/mobile/ui/session/SessionScreen.kt`
+- **SessionTabContent** [client] — props: tab, monitorLines, portConnected, myCall, highlightPrefs, onToggleNodeConnection — `app/src/main/kotlin/net/packetradio/mobile/ui/session/SessionTabContent.kt`
+- **MiniMonitor** [client] — props: monitorLines, height, myCall, highlightPrefs, mutedColor, errorColor — `app/src/main/kotlin/net/packetradio/mobile/ui/session/SessionTabContent.kt`
+- **MonitorResizeHandle** [client] — props: onDrag — `app/src/main/kotlin/net/packetradio/mobile/ui/session/SessionTabContent.kt`
+- **TabsDrawerContent** [client] — props: tabs, ports, frontId, monitorTabId, logTabId, onSelectTab — `app/src/main/kotlin/net/packetradio/mobile/ui/session/TabsDrawerContent.kt`
+- **DrawerRow** [client] — props: label, selected, onClick — `app/src/main/kotlin/net/packetradio/mobile/ui/session/TabsDrawerContent.kt`
+- **TabDrawerRow** [client] — props: tab, label, selected, onClick — `app/src/main/kotlin/net/packetradio/mobile/ui/session/TabsDrawerContent.kt`
+- **SettingsScreen** [client] — props: onBack — `app/src/main/kotlin/net/packetradio/mobile/ui/settings/SettingsScreen.kt`
+- **PgprcMobileTheme** [client] — props: darkTheme — `app/src/main/kotlin/net/packetradio/mobile/ui/theme/Theme.kt`

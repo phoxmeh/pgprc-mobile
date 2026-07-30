@@ -15,10 +15,11 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     suspend fun loadCurrent(): UiPrefs = app.preferences.uiPrefs.first()
 
-    fun save(callsign: String, location: String, homeServer: String) {
+    fun save(name: String, callsign: String, location: String, homeServer: String) {
         viewModelScope.launch {
             app.preferences.updateUiPrefs {
                 it.copy(
+                    operatorName = name.trim().ifBlank { null },
                     defaultCall = callsign.trim().ifBlank { null },
                     location = location.trim().ifBlank { null },
                     homeServer = homeServer.trim().ifBlank { null },

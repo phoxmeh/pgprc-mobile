@@ -36,12 +36,14 @@ private const val HIERARCHICAL_ADDRESS_REFERENCE_URL =
 @Composable
 fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = viewModel()) {
     val uriHandler = LocalUriHandler.current
+    var name by remember { mutableStateOf("") }
     var callsign by remember { mutableStateOf("") }
     var location by remember { mutableStateOf("") }
     var homeServer by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
         val current = viewModel.loadCurrent()
+        name = current.operatorName ?: ""
         callsign = current.defaultCall ?: ""
         location = current.location ?: ""
         homeServer = current.homeServer ?: ""
@@ -62,8 +64,14 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = viewModel(
         Column(Modifier.padding(innerPadding).fillMaxSize().padding(16.dp)) {
             Text("General", style = MaterialTheme.typography.titleMedium)
             OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("Name") },
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            )
+            OutlinedTextField(
                 value = callsign,
-                onValueChange = { callsign = it },
+                onValueChange = { callsign = it.uppercase() },
                 label = { Text("My callsign") },
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
             )
@@ -75,7 +83,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = viewModel(
             )
             OutlinedTextField(
                 value = homeServer,
-                onValueChange = { homeServer = it },
+                onValueChange = { homeServer = it.uppercase() },
                 label = { Text("Home BBS address") },
                 placeholder = { Text("N0CALL@WB1GOF.#EMA.MA.USA.NOAM") },
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
@@ -93,7 +101,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = viewModel(
                 modifier = Modifier.padding(top = 2.dp).clickable { uriHandler.openUri(HIERARCHICAL_ADDRESS_REFERENCE_URL) },
             )
             Button(
-                onClick = { viewModel.save(callsign, location, homeServer) },
+                onClick = { viewModel.save(name, callsign, location, homeServer) },
                 modifier = Modifier.padding(top = 12.dp),
             ) { Text("Save") }
 

@@ -9,22 +9,36 @@ import android.os.IBinder
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import net.packetradio.mobile.PacketRadioApp
 import net.packetradio.mobile.model.ConnState
 import net.packetradio.mobile.model.ConnectionId
+import net.packetradio.mobile.model.HighlightPrefs
 import net.packetradio.mobile.model.PortCommand
 import net.packetradio.mobile.model.PortConfig
+import net.packetradio.mobile.model.PinnedSession
 import net.packetradio.mobile.model.PortEntry
 import net.packetradio.mobile.model.PortEvent
+import net.packetradio.mobile.model.supportsUnproto
 import net.packetradio.mobile.service.PacketRadioService
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 
 private const val MONITOR_BUFFER_LINES = 5000
+
+/** The Monitor screen's always-available freeform unproto compose bar — see [SessionViewModel.adHoc]. */
+data class AdHocUnprotoState(
+    val portId: String? = null,
+    val node: String = "",
+    val via: String = "",
+    val inputText: String = "",
+)
 
 /**
  * Owns every open session tab plus the Monitor buffer, binds
@@ -60,8 +74,27 @@ class SessionViewModel(application: Application) : AndroidViewModel(application)
     private val _monitorFilter = MutableStateFlow("")
     val monitorFilter: StateFlow<String> = _monitorFilter.asStateFlow()
 
+    /** Port connect/disconnect/error and AX.25 connection-state noise — kept out of [monitorLines],
+     *  which is packet traffic only, mirroring the desktop's Monitor/Log split. */
+    private val _logLines = MutableStateFlow<List<String>>(emptyList())
+    val logLines: StateFlow<List<String>> = _logLines.asStateFlow()
+
+    private val _logFilter = MutableStateFlow("")
+    val logFilter: StateFlow<String> = _logFilter.asStateFlow()
+
+    /** The freeform unproto compose surface (Monitor screen) — not tied to any tab, since a tab
+     *  is now always a dialed two-way session; this is the only way to use a KISS-only port. */
+    private val _adHoc = MutableStateFlow(AdHocUnprotoState())
+    val adHoc: StateFlow<AdHocUnprotoState> = _adHoc.asStateFlow()
+
     private val _portStatuses = MutableStateFlow<Map<String, PortStatus>>(emptyMap())
     val portStatuses: StateFlow<Map<String, PortStatus>> = _portStatuses.asStateFlow()
+
+    val highlightPrefs: StateFlow<HighlightPrefs> = app.preferences.highlightPrefs
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), HighlightPrefs())
+
+    val myCall: StateFlow<String> = app.preferences.uiPrefs.map { it.defaultCall ?: "" }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
 
     // (portId, remote) -> tabId, while a tab's OpenConnection is in flight.
     private val pendingOpens = ConcurrentHashMap<Pair<String, String>, String>()
@@ -71,7 +104,34 @@ class SessionViewModel(application: Application) : AndroidViewModel(application)
 
     init {
         viewModelScope.launch {
-            app.ports.observeAll().collect { list -> _ports.value = list }
+            app.ports.observeAll().collect { list ->
+                _ports.value = list
+                if (_adHoc.value.portId == null) {
+                    list.firstOrNull { it.config.supportsUnproto() }?.let { port ->
+                        _adHoc.update { it.copy(portId = port.id) }
+                    }
+                }
+            }
+        }
+        // Restores pinned tabs as disconnected shells so they survive this ViewModel (and its
+        // in-memory tab list) not surviving a process/task death — see SessionTabState's doc.
+        // Runs once per cold ViewModel instance only: a config-change recreation reuses the
+        // same instance, so this never duplicates tabs already rehydrated this session.
+        viewModelScope.launch {
+            val pinned = app.pinnedSessions.getAll()
+            if (pinned.isNotEmpty()) {
+                _tabs.update { existing ->
+                    existing + pinned.map { session ->
+                        SessionTabState(
+                            id = UUID.randomUUID().toString(),
+                            portId = session.portId,
+                            node = session.remote,
+                            via = session.via,
+                            pinned = true,
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -106,18 +166,41 @@ class SessionViewModel(application: Application) : AndroidViewModel(application)
         super.onCleared()
     }
 
+    /** Drops every connection and stops the background service — the drawer's "Quit" entry. */
+    fun quit() {
+        val context = getApplication<Application>()
+        context.stopService(Intent(context, PacketRadioService::class.java))
+    }
+
     // --- Tabs ---------------------------------------------------------
 
-    fun addTab() {
-        val tab = SessionTabState(id = UUID.randomUUID().toString(), portId = ports.value.firstOrNull()?.id)
+    /**
+     * Dials a new session tab — the only way a tab is ever created. Identity
+     * (`portId`/`node`/`via`) is fixed for this tab's whole lifetime from
+     * here on (see [SessionTabState]). `connectImmediately = false` mirrors
+     * the desktop's "Open Disconnected": just creates the shell for offline
+     * history review, dials nothing.
+     */
+    fun dialTab(portId: String, node: String, via: String, connectImmediately: Boolean) {
+        val tab = SessionTabState(id = UUID.randomUUID().toString(), portId = portId, node = node, via = via)
         _tabs.update { it + tab }
         _selectedTabId.value = tab.id
+        if (connectImmediately) {
+            pendingOpens[portId to node.trim().uppercase()] = tab.id
+            openTabConnection(portId, tab)
+        }
     }
 
     fun closeTab(tabId: String) {
+        val closed = _tabs.value.find { it.id == tabId }
         _tabs.update { tabs -> tabs.filterNot { it.id == tabId } }
         if (_selectedTabId.value == tabId) {
             _selectedTabId.value = _tabs.value.firstOrNull()?.id
+        }
+        // Closing a pinned tab is an explicit "forget this", distinct from unpinning it while
+        // keeping the tab open — otherwise it would silently reappear as a shell next launch.
+        if (closed != null && closed.pinned && closed.portId != null) {
+            viewModelScope.launch { app.pinnedSessions.unpin(closed.toPinnedSession()) }
         }
     }
 
@@ -125,52 +208,57 @@ class SessionViewModel(application: Application) : AndroidViewModel(application)
         _selectedTabId.value = tabId
     }
 
-    fun setTabPort(tabId: String, portId: String) = updateTab(tabId) { it.copy(portId = portId) }
-    fun setTabNode(tabId: String, node: String) = updateTab(tabId) { it.copy(node = node) }
-    fun setTabVia(tabId: String, via: String) = updateTab(tabId) { it.copy(via = via) }
-    fun setTabUnproto(tabId: String, unproto: Boolean) = updateTab(tabId) { it.copy(unproto = unproto) }
     fun setTabInput(tabId: String, text: String) = updateTab(tabId) { it.copy(inputText = text) }
-    fun togglePin(tabId: String) = updateTab(tabId) { it.copy(pinned = !it.pinned) }
+
+    fun togglePin(tabId: String) {
+        val tab = _tabs.value.find { it.id == tabId } ?: return
+        if (tab.portId == null) return
+        val nowPinned = !tab.pinned
+        updateTab(tabId) { it.copy(pinned = nowPinned) }
+        val session = tab.toPinnedSession()
+        viewModelScope.launch {
+            if (nowPinned) app.pinnedSessions.pin(session) else app.pinnedSessions.unpin(session)
+        }
+    }
+
+    private fun SessionTabState.toPinnedSession(): PinnedSession =
+        PinnedSession(portId = requireNotNull(portId), remote = node, via = via)
 
     /**
      * Node-level connect/disconnect only — sends an actual AX.25
      * [PortCommand.OpenConnection]/[PortCommand.CloseConnection] frame over
-     * an already-open port. Deliberately does *not* touch the port's own
-     * connection state; that's [togglePort]'s job. A no-op in Unproto mode
-     * (nothing to dial) or if the port isn't connected yet (nothing to dial
-     * over) — the UI disables the button in both cases.
+     * an already-open port, reusing this tab's fixed node/via. Deliberately
+     * does *not* touch the port's own connection state; that's
+     * [togglePort]'s job. A no-op if the port isn't connected yet (nothing
+     * to dial over) — the UI disables the button in that case.
      */
     fun toggleNodeConnection(tabId: String) {
         val tab = _tabs.value.find { it.id == tabId } ?: return
         val port = ports.value.find { it.id == tab.portId } ?: return
         val svc = service ?: return
-        if (tab.unproto || !svc.portManager.isConnected(port.id)) return
+        if (!svc.portManager.isConnected(port.id)) return
 
         val connectionId = tab.connectionId
         if (connectionId != null) {
             viewModelScope.launch { svc.portManager.sendCommand(port.id, PortCommand.CloseConnection(connectionId)) }
-        } else if (tab.node.isNotBlank()) {
+        } else {
             pendingOpens[port.id to tab.node.trim().uppercase()] = tabId
             openTabConnection(port.id, tab)
         }
     }
 
+    /** Sends over a tab's live connection only — every tab is a dialed two-way session now, so
+     *  there's no unproto fallback here; see [sendAdHoc] for freeform unproto messaging. */
     fun sendTabInput(tabId: String) {
         val tab = _tabs.value.find { it.id == tabId } ?: return
         val port = ports.value.find { it.id == tab.portId } ?: return
         val svc = service ?: return
+        val connectionId = tab.connectionId ?: return
         val text = tab.inputText
         if (text.isBlank()) return
         val bytes = text.toByteArray()
 
-        viewModelScope.launch {
-            if (tab.connectionId != null) {
-                svc.portManager.sendCommand(port.id, PortCommand.Send(tab.connectionId, bytes))
-            } else {
-                val via = parseVia(tab.via)
-                svc.portManager.sendCommand(port.id, PortCommand.SendUnproto(tab.node.trim().uppercase(), via, bytes))
-            }
-        }
+        viewModelScope.launch { svc.portManager.sendCommand(port.id, PortCommand.Send(connectionId, bytes)) }
         updateTab(tabId) {
             it.copy(
                 lines = it.lines + "» $text",
@@ -179,6 +267,26 @@ class SessionViewModel(application: Application) : AndroidViewModel(application)
                 bytesSent = it.bytesSent + bytes.size,
             )
         }
+    }
+
+    // --- Ad-hoc unproto (Monitor screen) ---------------------------------
+
+    fun setAdHocPort(portId: String) = _adHoc.update { it.copy(portId = portId) }
+    fun setAdHocNode(node: String) = _adHoc.update { it.copy(node = node) }
+    fun setAdHocVia(via: String) = _adHoc.update { it.copy(via = via) }
+    fun setAdHocInput(text: String) = _adHoc.update { it.copy(inputText = text) }
+
+    fun sendAdHoc() {
+        val state = _adHoc.value
+        val portId = state.portId ?: return
+        val svc = service ?: return
+        if (state.node.isBlank() || state.inputText.isBlank()) return
+        val via = parseVia(state.via)
+        val bytes = state.inputText.toByteArray()
+        viewModelScope.launch {
+            svc.portManager.sendCommand(portId, PortCommand.SendUnproto(state.node.trim().uppercase(), via, bytes))
+        }
+        _adHoc.update { it.copy(inputText = "") }
     }
 
     // --- Ports ------------------------------------------------------------
@@ -221,25 +329,28 @@ class SessionViewModel(application: Application) : AndroidViewModel(application)
         _monitorFilter.value = text
     }
 
+    fun setLogFilter(text: String) {
+        _logFilter.value = text
+    }
+
     // --- Event routing ---------------------------------------------------
 
     private fun handleEvent(portId: String, event: PortEvent) {
         when (event) {
-            is PortEvent.Monitor -> {
-                appendMonitorLine("[$portId] ${event.line}")
-                appendUnprotoTrafficToTabs(portId, event)
-            }
+            is PortEvent.Monitor -> appendMonitorLine("[${portLabel(portId)}] ${event.line}")
             PortEvent.PortConnected -> {
                 _portStatuses.update { it + (portId to PortStatus.CONNECTED) }
+                appendLogLine("[${portLabel(portId)}] Port connected")
                 firePendingOpensFor(portId)
             }
             is PortEvent.PortDisconnected -> {
                 _portStatuses.update { it + (portId to PortStatus.OFF) }
+                appendLogLine("[${portLabel(portId)}] Port disconnected")
                 clearBoundConnectionsForPort(portId)
             }
             is PortEvent.PortError -> {
                 _portStatuses.update { it + (portId to PortStatus.ERROR) }
-                appendMonitorLine("[$portId] ERROR: ${event.message}")
+                appendLogLine("[${portLabel(portId)}] ERROR: ${event.message}")
             }
             is PortEvent.ConnectionOpened -> {
                 val tabId = pendingOpens.remove(portId to event.label) ?: return
@@ -248,19 +359,29 @@ class SessionViewModel(application: Application) : AndroidViewModel(application)
             }
             is PortEvent.ConnStateChanged -> {
                 val tabId = boundConnections[portId to event.id] ?: return
-                updateTab(tabId) { tab ->
+                val tab = _tabs.value.find { it.id == tabId } ?: return
+                appendLogLine("[${portLabel(portId)}] ${tab.node}: ${event.state}")
+                val justConnected = event.state == ConnState.CONNECTED && tab.connState != ConnState.CONNECTED
+                updateTab(tabId) { t ->
                     val since = when {
                         event.state != ConnState.CONNECTED -> null
-                        tab.connState == ConnState.CONNECTED -> tab.connectedSinceMillis
+                        t.connState == ConnState.CONNECTED -> t.connectedSinceMillis
                         else -> System.currentTimeMillis()
                     }
-                    tab.copy(connState = event.state, connectedSinceMillis = since)
+                    val lines = if (justConnected) t.lines + "— Connected —" else t.lines
+                    t.copy(connState = event.state, connectedSinceMillis = since, lines = lines)
                 }
             }
             is PortEvent.ConnectionClosed -> {
                 val tabId = boundConnections.remove(portId to event.id) ?: return
-                updateTab(tabId) {
-                    it.copy(connectionId = null, connState = ConnState.DISCONNECTED, connectedSinceMillis = null)
+                updateTab(tabId) { tab ->
+                    val line = if (tab.connState == ConnState.CONNECTED) "— Disconnected —" else "— Connection timed out —"
+                    tab.copy(
+                        connectionId = null,
+                        connState = ConnState.DISCONNECTED,
+                        connectedSinceMillis = null,
+                        lines = tab.lines + line,
+                    )
                 }
             }
             is PortEvent.Data -> {
@@ -280,6 +401,7 @@ class SessionViewModel(application: Application) : AndroidViewModel(application)
 
     private fun openTabConnection(portId: String, tab: SessionTabState) {
         val svc = service ?: return
+        updateTab(tab.id) { it.copy(lines = it.lines + "— Connecting to ${tab.node}… —") }
         viewModelScope.launch {
             svc.portManager.sendCommand(portId, PortCommand.OpenConnection(tab.node.trim().uppercase(), parseVia(tab.via)))
         }
@@ -298,35 +420,29 @@ class SessionViewModel(application: Application) : AndroidViewModel(application)
         for (key in toClear) {
             val tabId = boundConnections.remove(key) ?: continue
             updateTab(tabId) {
-                it.copy(connectionId = null, connState = ConnState.DISCONNECTED, connectedSinceMillis = null)
+                it.copy(
+                    connectionId = null,
+                    connState = ConnState.DISCONNECTED,
+                    connectedSinceMillis = null,
+                    lines = it.lines + "— Port disconnected —",
+                )
             }
         }
     }
 
-    /**
-     * Unproto tabs never bind a `ConnectionId` (nothing dials out), so
-     * `PortEvent.Data` never fires for them — the only way an incoming reply
-     * to a CQ/beacon reaches a tab's own scrollback, instead of only the
-     * Monitor buffer, is by mirroring genuinely-directed traffic in here.
-     * `Monitor.to` is only ever set for a real received 'U' frame (see
-     * AgwpeRunner/KissTcpRunner), never our own TX echo or session traffic,
-     * so this can't loop a tab's own sent lines back at itself.
-     */
-    private fun appendUnprotoTrafficToTabs(portId: String, event: PortEvent.Monitor) {
-        val to = event.to?.trim()?.uppercase() ?: return
-        _tabs.update { tabs ->
-            tabs.map { tab ->
-                if (tab.portId == portId && tab.unproto && tab.node.isNotBlank() && tab.node.trim().uppercase() == to) {
-                    tab.copy(lines = tab.lines + event.line)
-                } else {
-                    tab
-                }
-            }
-        }
+    /** The same `n` (0-based position in [ports]) used everywhere else — the Ports drawer, tab
+     *  titles — rather than the raw Room-generated UUID `portId`, which is meaningless to read. */
+    private fun portLabel(portId: String): String {
+        val index = _ports.value.indexOfFirst { it.id == portId }
+        return if (index >= 0) index.toString() else portId
     }
 
     private fun appendMonitorLine(line: String) {
         _monitorLines.update { (it + line).takeLast(MONITOR_BUFFER_LINES) }
+    }
+
+    private fun appendLogLine(line: String) {
+        _logLines.update { (it + line).takeLast(MONITOR_BUFFER_LINES) }
     }
 
     private fun updateTab(tabId: String, transform: (SessionTabState) -> SessionTabState) {

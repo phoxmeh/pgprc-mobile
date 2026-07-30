@@ -167,7 +167,7 @@ fun PortFormDialog(
                 if (kind == FormKind.AGWPE) {
                     OutlinedTextField(radioPort, { radioPort = it }, label = { Text("Radio port") }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
                 }
-                OutlinedTextField(myCall, { myCall = it }, label = { Text("My callsign") }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+                OutlinedTextField(myCall, { myCall = it.uppercase() }, label = { Text("My callsign") }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
                 Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = autoconnect, onCheckedChange = { autoconnect = it })
                     Text("Autoconnect on service start")

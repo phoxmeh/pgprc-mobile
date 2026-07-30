@@ -3,19 +3,22 @@ package net.packetradio.mobile.ui.session
 import net.packetradio.mobile.model.ConnState
 import net.packetradio.mobile.model.ConnectionId
 import net.packetradio.mobile.model.PortEntry
-import net.packetradio.mobile.model.supportsConnect
 
 /**
- * One open session tab's UI state. Ephemeral (in-memory only) for now —
- * persisting pinned tabs across a relaunch is a later phase; [pinned] only
- * controls in-session drawer display (pin icon, kept above unpinned tabs).
+ * One dialed session tab's state. Identity (`portId`/`node`/`via`) is fixed
+ * at creation by [SessionViewModel.dialTab] and never mutated afterward —
+ * redialing a different destination means a new tab, not editing this one
+ * (mirrors the desktop's `SessionTab`, where the same tab is only ever
+ * reused across repeated connect/disconnect cycles of that one fixed
+ * destination). Ephemeral (in-memory only) for now — persisting pinned tabs
+ * across a relaunch is a later phase; [pinned] only controls in-session
+ * drawer display (pin icon, kept above unpinned tabs).
  */
 data class SessionTabState(
     val id: String,
     val portId: String? = null,
     val node: String = "",
     val via: String = "",
-    val unproto: Boolean = false,
     val pinned: Boolean = false,
     /** Set once this tab's own `OpenConnection` is acknowledged by `ConnectionOpened`. */
     val connectionId: ConnectionId? = null,
@@ -30,20 +33,8 @@ data class SessionTabState(
     val inputText: String = "",
 )
 
-/**
- * Whether this tab should be treated as "connected" for status-bar/control
- * purposes — connect-capable ports need their own acknowledged connection,
- * unproto-only ports just need the underlying port itself to be active
- * (mirrors the desktop's `SessionTab::is_live()`). [portConnected] is looked
- * up live from [SessionViewModel]'s `portStatuses` map rather than cached on
- * the tab, so a tab pointed at an already-connected port (a freshly created
- * tab, or one whose port dropdown was just switched) reflects that
- * immediately instead of waiting for the next `PortConnected` event.
- */
-fun SessionTabState.isLive(port: PortEntry?, portConnected: Boolean): Boolean {
-    val config = port?.config ?: return false
-    return if (config.supportsConnect() && !unproto) connState == ConnState.CONNECTED else portConnected
-}
+/** Whether this tab has a live, acknowledged two-way connection right now. */
+fun SessionTabState.isLive(): Boolean = connState == ConnState.CONNECTED
 
 /**
  * `n:<node>` (or just `n` with no node yet) where `n` is the tab's port's
