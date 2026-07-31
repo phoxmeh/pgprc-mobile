@@ -39,11 +39,6 @@ Mirrors the desktop project's 4-crate workspace split:
 | `core-data` | Room database + DataStore Preferences + per-node history file storage. |
 | `app` | Compose UI, ViewModels, navigation, and the foreground `Service` that keeps connections/beacons alive in the background. |
 
-## Test rig
-
-Same as the desktop project: a local Direwolf instance with AGWPE on `127.0.0.1:8000` and
-KISS-TCP on `127.0.0.1:8001` (dummy audio load), callsign `KD3BFP-9`. For an emulator/device
-this needs to be reachable over the LAN rather than `127.0.0.1`.
 
 ## License
 
