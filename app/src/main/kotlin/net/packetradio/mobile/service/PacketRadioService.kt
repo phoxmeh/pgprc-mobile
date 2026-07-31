@@ -38,6 +38,10 @@ class PacketRadioService : Service() {
 
     val portManager: PortManager by lazy { PortManager(scope) }
     val beaconScheduler: BeaconScheduler by lazy { BeaconScheduler(scope, portManager) }
+    private val stationTracker: StationTracker by lazy {
+        val app = application as PacketRadioApp
+        StationTracker(this, scope, portManager, app.addressBook, app.notifications)
+    }
 
     private val binder = LocalBinder()
 
@@ -49,7 +53,8 @@ class PacketRadioService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannel()
+        createNotificationChannels()
+        stationTracker.start()
         // Watch our own event stream rather than trusting every call site to
         // remember to call refreshNotification() after a connect/disconnect —
         // found the hard way (a real device test showed the notification
@@ -162,17 +167,23 @@ class PacketRadioService : Service() {
             .build()
     }
 
-    private fun createNotificationChannel() {
-        val channel = NotificationChannel(
+    private fun createNotificationChannels() {
+        val connectionChannel = NotificationChannel(
             CHANNEL_ID,
             "Packet radio connection",
             NotificationManager.IMPORTANCE_LOW,
         ).apply { description = "Shows while any port is connected or a beacon is scheduled" }
-        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+        val alertChannel = NotificationChannel(
+            ALERT_CHANNEL_ID,
+            "Watched destination alerts",
+            NotificationManager.IMPORTANCE_DEFAULT,
+        ).apply { description = "A watched destination (Notifications screen) received traffic" }
+        getSystemService(NotificationManager::class.java).createNotificationChannels(listOf(connectionChannel, alertChannel))
     }
 
     companion object {
         private const val CHANNEL_ID = "packet_radio_connection"
+        const val ALERT_CHANNEL_ID = "packet_radio_alerts"
         private const val NOTIFICATION_ID = 1
         const val ACTION_DISCONNECT = "net.packetradio.mobile.action.DISCONNECT"
         const val ACTION_QUIT = "net.packetradio.mobile.action.QUIT"

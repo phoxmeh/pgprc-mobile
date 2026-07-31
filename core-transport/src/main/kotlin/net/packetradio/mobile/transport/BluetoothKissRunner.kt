@@ -94,8 +94,11 @@ class BluetoothKissRunner(private val config: PortConfig.BluetoothKiss) : PortRu
                             if (cmd and 0x0F != 0) continue // only interested in type-0 data frames
                             val frame = Ax25.decodeFrame(payload) ?: continue
                             events.send(PortEvent.StationHeard(frame.source.label()))
-                            val to = (frame.content as? Ax25FrameContent.UnnumberedInformation)?.let { frame.destination.label() }
-                            events.send(PortEvent.Monitor(Ax25.describeFrame(frame), to))
+                            val ui = frame.content as? Ax25FrameContent.UnnumberedInformation
+                            events.send(PortEvent.Monitor(Ax25.describeFrame(frame), ui?.let { frame.destination.label() }))
+                            if (ui != null) {
+                                events.send(PortEvent.UnprotoReceived(frame.source.label(), frame.destination.label(), ui.pid, ui.info))
+                            }
                             // Only frames actually addressed to us, and never UI (that's Monitor's job
                             // above, promiscuously) — anything else here would mean answering on behalf
                             // of some other station's QSO we merely overheard on the shared channel.
@@ -145,6 +148,7 @@ class BluetoothKissRunner(private val config: PortConfig.BluetoothKiss) : PortRu
                         }
                         framesIn.onReceive { frame -> driver.frameReceived(frame) }
                         driver.timerFiredEvents.onReceive { id -> driver.onTimerFired(id) }
+                        driver.t3FiredEvents.onReceive { id -> driver.onT3Fired(id) }
                     }
                 }
             } catch (e: IOException) {

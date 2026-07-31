@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import net.packetradio.mobile.PacketRadioApp
+import net.packetradio.mobile.model.AddressBookEntry
 import net.packetradio.mobile.model.ConnState
 import net.packetradio.mobile.model.ConnectionId
 import net.packetradio.mobile.model.HighlightPrefs
@@ -61,6 +62,10 @@ class SessionViewModel(application: Application) : AndroidViewModel(application)
 
     private val _ports = MutableStateFlow<List<PortEntry>>(emptyList())
     val ports: StateFlow<List<PortEntry>> = _ports.asStateFlow()
+
+    /** Feeds the Dial dialog's address-book picker — see [DialDialog]. */
+    val heardStations: StateFlow<List<AddressBookEntry>> =
+        app.addressBook.observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val _tabs = MutableStateFlow<List<SessionTabState>>(emptyList())
     val tabs: StateFlow<List<SessionTabState>> = _tabs.asStateFlow()
@@ -413,7 +418,10 @@ class SessionViewModel(application: Application) : AndroidViewModel(application)
                     )
                 }
             }
-            is PortEvent.StationHeard -> {} // address book isn't built yet (a later phase)
+            // Persisted by StationTracker (a service-level collector on the same events flow,
+            // independent of any bound UI) rather than here — see PacketRadioService.
+            is PortEvent.StationHeard -> {}
+            is PortEvent.UnprotoReceived -> {}
         }
     }
 

@@ -1,6 +1,8 @@
 package net.packetradio.mobile
 
 import android.app.Application
+import net.packetradio.mobile.data.AddressBookRepository
+import net.packetradio.mobile.data.NotificationRepository
 import net.packetradio.mobile.data.PinnedSessionRepository
 import net.packetradio.mobile.data.PortRepository
 import net.packetradio.mobile.data.db.PacketRadioDatabase
@@ -13,4 +15,6 @@ class PacketRadioApp : Application() {
     val preferences: AppPreferences by lazy { AppPreferences(this) }
     val ports: PortRepository by lazy { PortRepository(database) }
     val pinnedSessions: PinnedSessionRepository by lazy { PinnedSessionRepository(database) }
+    val addressBook: AddressBookRepository by lazy { AddressBookRepository(database) }
+    val notifications: NotificationRepository by lazy { NotificationRepository(database) }
 }

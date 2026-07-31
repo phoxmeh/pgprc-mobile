@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -15,9 +16,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -36,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import net.packetradio.mobile.model.PortConfig
 import net.packetradio.mobile.model.PortEntry
 import net.packetradio.mobile.model.kindLabel
+import net.packetradio.mobile.ui.common.DrawerRow
 import net.packetradio.mobile.ui.session.PortStatus
 
 private val ConnectedColor = Color(0xFF2E7D32)
@@ -58,6 +63,8 @@ fun PortsDrawerContent(
     onDeletePort: (String) -> Unit,
     onMoveUp: (String) -> Unit,
     onMoveDown: (String) -> Unit,
+    onOpenNotifications: () -> Unit = {},
+    onOpenHeardStations: () -> Unit = {},
 ) {
     var showAdd by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<PortEntry?>(null) }
@@ -74,7 +81,7 @@ fun PortsDrawerContent(
                 Icon(Icons.Filled.Add, contentDescription = "Add Port")
             }
         }
-        LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
+        LazyColumn(Modifier.weight(1f).padding(horizontal = 12.dp)) {
             items(ports, key = { it.id }) { entry ->
                 val index = ports.indexOf(entry)
                 PortToggleRow(
@@ -90,6 +97,25 @@ fun PortsDrawerContent(
                     onMoveDown = { onMoveDown(entry.id) },
                 )
             }
+        }
+
+        HorizontalDivider(Modifier.padding(vertical = 4.dp))
+        // Unlike every other drawer surface (which only needs statusBarsPadding — see
+        // SessionScreen), this bottom block sits flush against the drawer's own bottom edge, so
+        // it's the one place that needs to additionally clear the gesture/nav-bar inset itself.
+        Column(Modifier.navigationBarsPadding().padding(bottom = 12.dp)) {
+            DrawerRow(
+                label = "Notifications",
+                selected = false,
+                leadingIcon = Icons.Filled.Notifications,
+                onClick = onOpenNotifications,
+            )
+            DrawerRow(
+                label = "Heard Stations",
+                selected = false,
+                leadingIcon = Icons.Filled.Radar,
+                onClick = onOpenHeardStations,
+            )
         }
     }
 

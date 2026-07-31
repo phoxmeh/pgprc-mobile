@@ -38,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import net.packetradio.mobile.model.PortEntry
+import net.packetradio.mobile.ui.common.DrawerRow
 
 private const val CONFIRM_CLOSE_TIMEOUT_MS = 3000L
 
@@ -115,28 +116,6 @@ fun TabsDrawerContent(
                 leadingIcon = Icons.Filled.Settings,
                 onClick = onOpenSettings,
             )
-        }
-    }
-}
-
-@Composable
-private fun DrawerRow(
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-    leadingIcon: androidx.compose.ui.graphics.vector.ImageVector? = null,
-) {
-    Surface(
-        onClick = onClick,
-        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
-    ) {
-        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (leadingIcon != null) {
-                Icon(leadingIcon, contentDescription = null, modifier = Modifier.padding(end = 12.dp))
-            }
-            Text(label, style = MaterialTheme.typography.bodyLarge)
         }
     }
 }

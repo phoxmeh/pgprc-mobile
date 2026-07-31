@@ -218,4 +218,66 @@ class Ax25LinkSessionTest {
         assertEquals(Ax25LinkSession.LinkState.DISCONNECTED, s.state)
         assertEquals("remote disconnected", effects.filterIsInstance<Ax25LinkSession.Effect.StateChanged>().single().reason)
     }
+
+    @Test
+    fun `an unknown control field gets a FRMR and drops the link`() {
+        val s = connected()
+        val effects = s.handle(Ax25LinkSession.Event.FrameReceived(Ax25FrameContent.Unknown(0x17), control = 0x17))
+
+        val frmr = effects.transmittedContents().single() as Ax25FrameContent.FrameReject
+        assertTrue("W condition (invalid/unimplemented control field)", frmr.w)
+        assertEquals(0x17, frmr.rejectedControl)
+        assertEquals(Ax25LinkSession.LinkState.DISCONNECTED, s.state)
+        assertEquals("protocol error (sent FRMR)", effects.filterIsInstance<Ax25LinkSession.Effect.StateChanged>().single().reason)
+    }
+
+    @Test
+    fun `an out-of-window N(R) gets a FRMR and drops the link`() {
+        val s = connected() // nothing outstanding: V(A) = V(S) = 0, so only N(R) = 0 is valid
+        val effects = s.handle(Ax25LinkSession.Event.FrameReceived(Ax25FrameContent.ReceiveReady(nr = 5, pollFinal = false), control = 0x01))
+
+        val frmr = effects.transmittedContents().single() as Ax25FrameContent.FrameReject
+        assertTrue("Z condition (invalid N(R))", frmr.z)
+        assertEquals(Ax25LinkSession.LinkState.DISCONNECTED, s.state)
+    }
+
+    @Test
+    fun `SetLocalBusy swaps our acks and poll-replies from RR to RNR and back`() {
+        val s = connected()
+
+        val busyEffects = s.handle(Ax25LinkSession.Event.SetLocalBusy(true))
+        assertEquals(listOf(Ax25FrameContent.ReceiveNotReady(0, false)), busyEffects.transmittedContents())
+
+        val ackWhileBusy = s.handle(
+            Ax25LinkSession.Event.FrameReceived(Ax25FrameContent.Information(ns = 0, nr = 0, pollFinal = false, pid = 0xF0, info = "hi".toByteArray())),
+        )
+        val reply = ackWhileBusy.transmittedContents().single() as Ax25FrameContent.ReceiveNotReady
+        assertEquals(1, reply.nr)
+
+        val clearEffects = s.handle(Ax25LinkSession.Event.SetLocalBusy(false))
+        assertEquals(listOf(Ax25FrameContent.ReceiveReady(1, false)), clearEffects.transmittedContents())
+    }
+
+    @Test
+    fun `T3 expiry while idle sends a status poll and supervises it with T1`() {
+        val s = connected()
+        val effects = s.handle(Ax25LinkSession.Event.T3Expired)
+
+        assertEquals(listOf(Ax25FrameContent.ReceiveReady(0, true)), effects.transmittedContents())
+        assertTrue(effects.contains(Ax25LinkSession.Effect.StartT1))
+    }
+
+    @Test
+    fun `T1 gives up an idle link if the T3 status poll goes unanswered`() {
+        val s = connected(maxRetries = 1)
+        s.handle(Ax25LinkSession.Event.T3Expired)
+
+        val retry = s.handle(Ax25LinkSession.Event.T1Expired)
+        assertEquals(listOf(Ax25FrameContent.ReceiveReady(0, true)), retry.transmittedContents())
+        assertEquals(Ax25LinkSession.LinkState.CONNECTED, s.state)
+
+        val giveUp = s.handle(Ax25LinkSession.Event.T1Expired)
+        assertEquals(Ax25LinkSession.LinkState.DISCONNECTED, s.state)
+        assertEquals("link failure (no response)", giveUp.filterIsInstance<Ax25LinkSession.Effect.StateChanged>().single().reason)
+    }
 }

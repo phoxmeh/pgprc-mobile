@@ -56,6 +56,21 @@ sealed interface PortEvent {
     }
 
     data class StationHeard(val callsign: String) : PortEvent
+
+    /**
+     * Companion to [Monitor] for a UI/unproto frame specifically — carries the raw PID and
+     * payload [Monitor]'s formatted [Monitor.line] text doesn't, for consumers that need to
+     * parse the payload themselves (NET/ROM NODES-broadcast alias learning, the BEACON packet
+     * log, and notification-destination matching — see `StationTracker`). Always emitted
+     * alongside a [Monitor] for the same frame, never instead of it.
+     */
+    class UnprotoReceived(val from: String, val to: String, val pid: Int, val data: ByteArray) : PortEvent {
+        override fun equals(other: Any?): Boolean =
+            other is UnprotoReceived && from == other.from && to == other.to && pid == other.pid && data.contentEquals(other.data)
+
+        override fun hashCode(): Int = listOf(from, to, pid).hashCode() * 31 + data.contentHashCode()
+        override fun toString(): String = "UnprotoReceived(from=$from, to=$to, pid=$pid, data=${data.size}B)"
+    }
 }
 
 /**

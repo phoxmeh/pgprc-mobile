@@ -10,15 +10,19 @@ package net.packetradio.mobile.protocol
  * A pure reducer by design: [handle] takes one [Event] and returns the [Effect]s to carry
  * out — frames to transmit, timers to (re)start/stop, data to deliver, state transitions to
  * report. It owns no coroutines, no sockets, and schedules no real timers itself; the caller
- * (a `PortRunner`) writes transmitted bytes to the wire, runs the actual T1 delay, and feeds
- * [Event.T1Expired] back in when it fires. This split is what makes the whole thing
- * unit-testable without real sockets or timers.
+ * (a `PortRunner`) writes transmitted bytes to the wire, runs the actual T1/T3 delays, and
+ * feeds [Event.T1Expired]/[Event.T3Expired] back in when they fire. This split is what makes
+ * the whole thing unit-testable without real sockets or timers.
+ *
+ * Covers the full AX.25 2.0 link layer: connect/disconnect, I-frame sequencing with
+ * go-back-N retransmission, RR/RNR/REJ flow control in both directions (including this
+ * station's own busy signaling via [Event.SetLocalBusy]), the T3 idle-link poll, and FRMR
+ * generation on a protocol error from the peer (invalid/unimplemented control field, an
+ * I-field too long or present where not permitted, or an invalid N(R)).
  *
  * Deliberately out of scope, matching this codebase's "keep it real" boundary: SABME/
- * modulo-128 extended sequencing and SREJ selective-reject (virtually every TNC and packet
- * BBS in practice speaks plain mod-8 AX.25 2.0), and the T3 idle-link poll (a link that's
- * gone silent but never actually drops isn't distinguished from normal radio-silence here —
- * a reasonable follow-up, not required for two-way connect/data/disconnect to work).
+ * modulo-128 extended sequencing, SREJ selective-reject, and XID parameter negotiation
+ * (virtually every TNC and packet BBS in practice speaks plain mod-8 AX.25 2.0).
  */
 class Ax25LinkSession(
     private val myCall: Ax25Address,
@@ -26,6 +30,8 @@ class Ax25LinkSession(
     private val via: List<Ax25Address> = emptyList(),
     private val windowSize: Int = 4,
     private val maxRetries: Int = 10,
+    /** Max I-field length before an incoming I-frame is a protocol error (AX.25 N1). */
+    private val n1MaxInfoLen: Int = 256,
 ) {
     enum class LinkState { DISCONNECTED, CONNECTING, CONNECTED, DISCONNECTING }
 
@@ -33,8 +39,24 @@ class Ax25LinkSession(
         data object UserConnect : Event
         data object UserDisconnect : Event
         data class UserSend(val bytes: ByteArray) : Event
-        data class FrameReceived(val content: Ax25FrameContent) : Event
+
+        /**
+         * [control] and [hasUnexpectedInfo] are only used for FRMR protocol-error detection
+         * (see [frmrCondition]) — default so callers that don't care (most existing tests)
+         * can construct this with just [content].
+         */
+        data class FrameReceived(
+            val content: Ax25FrameContent,
+            val control: Int = 0,
+            val hasUnexpectedInfo: Boolean = false,
+        ) : Event
+
         data object T1Expired : Event
+
+        /** Tells the peer whether we can currently accept more I-frames. */
+        data class SetLocalBusy(val busy: Boolean) : Event
+
+        data object T3Expired : Event
     }
 
     sealed interface Effect {
@@ -43,9 +65,20 @@ class Ax25LinkSession(
         data class DataReceived(val bytes: ByteArray) : Effect
         data object StartT1 : Effect
         data object StopT1 : Effect
+        data object StartT3 : Effect
+        data object StopT3 : Effect
     }
 
     private data class Unacked(val seq: Int, val payload: ByteArray)
+
+    /** A locally-detected protocol error worth an FRMR: see AX.25 2.0's W/X/Y/Z conditions. */
+    private data class FrmrReason(
+        val control: Int,
+        val w: Boolean = false,
+        val x: Boolean = false,
+        val y: Boolean = false,
+        val z: Boolean = false,
+    )
 
     var state: LinkState = LinkState.DISCONNECTED
         private set
@@ -56,14 +89,20 @@ class Ax25LinkSession(
     private val unacked = ArrayDeque<Unacked>()
     private val pendingSend = ArrayDeque<ByteArray>()
     private var peerBusy = false
+    private var localBusy = false
     private var retries = 0
+
+    /** Set by [onT3Expired] when we sent a status poll; cleared once the peer proves it's alive. */
+    private var pollPending = false
 
     fun handle(event: Event): List<Effect> = when (event) {
         Event.UserConnect -> onUserConnect()
         Event.UserDisconnect -> onUserDisconnect()
         is Event.UserSend -> onUserSend(event.bytes)
-        is Event.FrameReceived -> onFrameReceived(event.content)
+        is Event.FrameReceived -> onFrameReceived(event)
         Event.T1Expired -> onT1Expired()
+        is Event.SetLocalBusy -> onSetLocalBusy(event.busy)
+        Event.T3Expired -> onT3Expired()
     }
 
     private fun onUserConnect(): List<Effect> {
@@ -78,7 +117,7 @@ class Ax25LinkSession(
         if (state != LinkState.CONNECTED && state != LinkState.CONNECTING) return emptyList()
         retries = 0
         state = LinkState.DISCONNECTING
-        return listOf(Effect.Transmit(disc()), Effect.StartT1, Effect.StateChanged(state))
+        return listOf(Effect.Transmit(disc()), Effect.StartT1, Effect.StopT3, Effect.StateChanged(state))
     }
 
     private fun onUserSend(bytes: ByteArray): List<Effect> {
@@ -87,11 +126,11 @@ class Ax25LinkSession(
         return flushWindow()
     }
 
-    private fun onFrameReceived(content: Ax25FrameContent): List<Effect> = when (state) {
-        LinkState.DISCONNECTED -> onFrameWhileDisconnected(content)
-        LinkState.CONNECTING -> onFrameWhileConnecting(content)
-        LinkState.CONNECTED -> onFrameWhileConnected(content)
-        LinkState.DISCONNECTING -> onFrameWhileDisconnecting(content)
+    private fun onFrameReceived(event: Event.FrameReceived): List<Effect> = when (state) {
+        LinkState.DISCONNECTED -> onFrameWhileDisconnected(event.content)
+        LinkState.CONNECTING -> onFrameWhileConnecting(event.content)
+        LinkState.CONNECTED -> onFrameWhileConnected(event.content, event.control, event.hasUnexpectedInfo)
+        LinkState.DISCONNECTING -> onFrameWhileDisconnecting(event.content)
     }
 
     private fun onFrameWhileDisconnected(content: Ax25FrameContent): List<Effect> {
@@ -102,14 +141,14 @@ class Ax25LinkSession(
         resetSequencing()
         retries = 0
         state = LinkState.CONNECTED
-        return listOf(Effect.Transmit(ua()), Effect.StateChanged(state))
+        return listOf(Effect.Transmit(ua()), Effect.StartT3, Effect.StateChanged(state))
     }
 
     private fun onFrameWhileConnecting(content: Ax25FrameContent): List<Effect> = when (content) {
         Ax25FrameContent.UnnumberedAcknowledge -> {
             retries = 0
             state = LinkState.CONNECTED
-            listOf(Effect.StopT1, Effect.StateChanged(state))
+            listOf(Effect.StopT1, Effect.StartT3, Effect.StateChanged(state))
         }
         Ax25FrameContent.DisconnectedMode -> {
             state = LinkState.DISCONNECTED
@@ -123,12 +162,15 @@ class Ax25LinkSession(
     private fun onFrameWhileDisconnecting(content: Ax25FrameContent): List<Effect> = when (content) {
         Ax25FrameContent.UnnumberedAcknowledge, Ax25FrameContent.DisconnectedMode -> {
             state = LinkState.DISCONNECTED
-            listOf(Effect.StopT1, Effect.StateChanged(state))
+            listOf(Effect.StopT1, Effect.StopT3, Effect.StateChanged(state))
         }
         else -> emptyList()
     }
 
-    private fun onFrameWhileConnected(content: Ax25FrameContent): List<Effect> {
+    private fun onFrameWhileConnected(content: Ax25FrameContent, control: Int, hasUnexpectedInfo: Boolean): List<Effect> {
+        frmrCondition(content, control, hasUnexpectedInfo)?.let { return sendFrmrAndDisconnect(it) }
+        pollPending = false
+
         val effects = mutableListOf<Effect>()
         when (content) {
             is Ax25FrameContent.Information -> {
@@ -136,7 +178,7 @@ class Ax25LinkSession(
                 if (content.ns == vr) {
                     vr = (vr + 1) % MODULUS
                     if (content.info.isNotEmpty()) effects += Effect.DataReceived(content.info)
-                    effects += Effect.Transmit(rr(pollFinal = content.pollFinal))
+                    effects += Effect.Transmit(statusReply(pollFinal = content.pollFinal))
                 } else {
                     // Out-of-sequence — go-back-N: ask for a redo starting at what we actually expect.
                     effects += Effect.Transmit(reject(pollFinal = content.pollFinal))
@@ -145,17 +187,17 @@ class Ax25LinkSession(
             is Ax25FrameContent.ReceiveReady -> {
                 peerBusy = false
                 effects += ackAndContinue(content.nr)
-                if (content.pollFinal) effects += Effect.Transmit(rr(pollFinal = true))
+                if (content.pollFinal) effects += Effect.Transmit(statusReply(pollFinal = true))
             }
             is Ax25FrameContent.ReceiveNotReady -> {
                 peerBusy = true
                 effects += ackAndContinue(content.nr)
-                if (content.pollFinal) effects += Effect.Transmit(rr(pollFinal = true))
+                if (content.pollFinal) effects += Effect.Transmit(statusReply(pollFinal = true))
             }
             is Ax25FrameContent.Reject -> {
                 peerBusy = false
                 effects += ackAndRetransmit(content.nr)
-                if (content.pollFinal) effects += Effect.Transmit(rr(pollFinal = true))
+                if (content.pollFinal) effects += Effect.Transmit(statusReply(pollFinal = true))
             }
             Ax25FrameContent.SetAsynchronousBalancedMode -> {
                 // The peer reset the link from their side (e.g. after their own timeout) — start
@@ -168,16 +210,19 @@ class Ax25LinkSession(
                 state = LinkState.DISCONNECTED
                 effects += Effect.Transmit(ua())
                 effects += Effect.StopT1
+                effects += Effect.StopT3
                 effects += Effect.StateChanged(state, "remote disconnected")
             }
             Ax25FrameContent.DisconnectedMode -> {
                 state = LinkState.DISCONNECTED
                 effects += Effect.StopT1
+                effects += Effect.StopT3
                 effects += Effect.StateChanged(state, "remote reports disconnected")
             }
-            Ax25FrameContent.FrameReject -> {
+            is Ax25FrameContent.FrameReject -> {
                 state = LinkState.DISCONNECTED
                 effects += Effect.StopT1
+                effects += Effect.StopT3
                 effects += Effect.StateChanged(state, "protocol error (FRMR)")
             }
             is Ax25FrameContent.UnnumberedInformation,
@@ -186,8 +231,11 @@ class Ax25LinkSession(
             -> {
                 // A stray UI frame, an unsolicited UA (e.g. a duplicate after we already
                 // finished the handshake), or anything unrecognized — none of this link's concern.
+                // (Unknown control fields are actually caught by frmrCondition above; this arm
+                // only exists for `when` exhaustiveness.)
             }
         }
+        if (state == LinkState.CONNECTED) effects += Effect.StartT3
         return effects
     }
 
@@ -198,7 +246,8 @@ class Ax25LinkSession(
             state = LinkState.DISCONNECTED
             unacked.clear()
             pendingSend.clear()
-            return listOf(Effect.StopT1, Effect.StateChanged(state, reason))
+            pollPending = false
+            return listOf(Effect.StopT1, Effect.StopT3, Effect.StateChanged(state, reason))
         }
         return when (state) {
             LinkState.CONNECTING -> listOf(Effect.Transmit(sabm()), Effect.StartT1)
@@ -206,11 +255,87 @@ class Ax25LinkSession(
             LinkState.CONNECTED -> {
                 val effects = mutableListOf<Effect>()
                 for (u in unacked) effects += Effect.Transmit(information(u.seq, u.payload))
-                if (unacked.isNotEmpty()) effects += Effect.StartT1
+                if (unacked.isEmpty() && pollPending) effects += Effect.Transmit(statusReply(pollFinal = true))
+                if (unacked.isNotEmpty() || pollPending) effects += Effect.StartT1
                 effects
             }
             LinkState.DISCONNECTED -> emptyList()
         }
+    }
+
+    private fun onSetLocalBusy(busy: Boolean): List<Effect> {
+        val changed = busy != localBusy
+        localBusy = busy
+        if (!changed || state != LinkState.CONNECTED) return emptyList()
+        // Tell the peer as soon as the condition changes, not just on its next poll.
+        return listOf(Effect.Transmit(statusReply(pollFinal = false)))
+    }
+
+    private fun onT3Expired(): List<Effect> {
+        if (state != LinkState.CONNECTED) return emptyList()
+        pollPending = true
+        return listOf(Effect.Transmit(statusReply(pollFinal = true)), Effect.StartT1)
+    }
+
+    /**
+     * The AX.25 2.0 FRMR exception conditions: W (invalid/unimplemented control field), X
+     * (I-field too long), Y (I-field present on a frame that doesn't permit one), Z (invalid
+     * N(R), i.e. outside our currently outstanding window). `null` means the frame is fine.
+     */
+    private fun frmrCondition(content: Ax25FrameContent, control: Int, hasUnexpectedInfo: Boolean): FrmrReason? = when (content) {
+        is Ax25FrameContent.Unknown -> FrmrReason(control, w = true)
+        is Ax25FrameContent.Information -> when {
+            content.info.size > n1MaxInfoLen -> FrmrReason(control, x = true)
+            !isValidNr(content.nr) -> FrmrReason(control, z = true)
+            else -> null
+        }
+        is Ax25FrameContent.ReceiveReady -> nrOrInfoViolation(control, content.nr, hasUnexpectedInfo)
+        is Ax25FrameContent.ReceiveNotReady -> nrOrInfoViolation(control, content.nr, hasUnexpectedInfo)
+        is Ax25FrameContent.Reject -> nrOrInfoViolation(control, content.nr, hasUnexpectedInfo)
+        Ax25FrameContent.SetAsynchronousBalancedMode,
+        Ax25FrameContent.Disconnect,
+        Ax25FrameContent.DisconnectedMode,
+        Ax25FrameContent.UnnumberedAcknowledge,
+        -> if (hasUnexpectedInfo) FrmrReason(control, y = true) else null
+        // A peer's own FRMR, and a stray UI frame (its info field is legitimate), aren't errors.
+        is Ax25FrameContent.FrameReject, is Ax25FrameContent.UnnumberedInformation -> null
+    }
+
+    private fun nrOrInfoViolation(control: Int, nr: Int, hasUnexpectedInfo: Boolean): FrmrReason? = when {
+        !isValidNr(nr) -> FrmrReason(control, z = true)
+        hasUnexpectedInfo -> FrmrReason(control, y = true)
+        else -> null
+    }
+
+    /** Whether [nr] falls within our currently outstanding window [V(A), V(S)] (mod 8, inclusive). */
+    private fun isValidNr(nr: Int): Boolean {
+        var cursor = va
+        repeat(MODULUS + 1) {
+            if (cursor == nr) return true
+            if (cursor == vs) return false
+            cursor = (cursor + 1) % MODULUS
+        }
+        return false
+    }
+
+    private fun sendFrmrAndDisconnect(reason: FrmrReason): List<Effect> {
+        val frmr = Ax25.encodeFrmr(
+            myCall,
+            remoteCall,
+            via,
+            rejectedControl = reason.control,
+            vs = vs,
+            vr = vr,
+            w = reason.w,
+            x = reason.x,
+            y = reason.y,
+            z = reason.z,
+        )
+        state = LinkState.DISCONNECTED
+        unacked.clear()
+        pendingSend.clear()
+        pollPending = false
+        return listOf(Effect.Transmit(frmr), Effect.StopT1, Effect.StopT3, Effect.StateChanged(state, "protocol error (sent FRMR)"))
     }
 
     /** Sends whatever fits in the window right now; a full window just leaves the rest queued. */
@@ -269,6 +394,8 @@ class Ax25LinkSession(
         va = 0
         vr = 0
         peerBusy = false
+        localBusy = false
+        pollPending = false
         unacked.clear()
         pendingSend.clear()
     }
@@ -278,7 +405,12 @@ class Ax25LinkSession(
     private fun ua() = Ax25.encodeUa(myCall, remoteCall, via)
     private fun dm() = Ax25.encodeDm(myCall, remoteCall, via)
     private fun rr(pollFinal: Boolean) = Ax25.encodeReceiveReady(myCall, remoteCall, via, nr = vr, pollFinal = pollFinal, command = false)
+    private fun rnr(pollFinal: Boolean) = Ax25.encodeReceiveNotReady(myCall, remoteCall, via, nr = vr, pollFinal = pollFinal, command = false)
     private fun reject(pollFinal: Boolean) = Ax25.encodeReject(myCall, remoteCall, via, nr = vr, pollFinal = pollFinal, command = false)
+
+    /** RR when we can accept more I-frames, RNR when we can't — our own busy state, see [onSetLocalBusy]. */
+    private fun statusReply(pollFinal: Boolean) = if (localBusy) rnr(pollFinal) else rr(pollFinal)
+
     private fun information(ns: Int, payload: ByteArray) =
         Ax25.encodeInformation(myCall, remoteCall, via, ns = ns, nr = vr, info = payload)
 

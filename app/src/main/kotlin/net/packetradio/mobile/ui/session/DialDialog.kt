@@ -21,6 +21,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import net.packetradio.mobile.model.AddressBookEntry
 import net.packetradio.mobile.model.PortEntry
 import net.packetradio.mobile.model.supportsConnect
 
@@ -34,6 +35,7 @@ import net.packetradio.mobile.model.supportsConnect
 @Composable
 fun DialDialog(
     ports: List<PortEntry>,
+    heardStations: List<AddressBookEntry> = emptyList(),
     onDismiss: () -> Unit,
     onDial: (portId: String, node: String, via: String, connectImmediately: Boolean) -> Unit,
 ) {
@@ -54,11 +56,14 @@ fun DialDialog(
                     selectedId = selectedPortId,
                     onSelected = { selectedPortId = it },
                 )
-                OutlinedTextField(
+                NodePicker(
                     value = node,
                     onValueChange = { node = it.uppercase() },
-                    label = { Text("Node") },
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    suggestions = heardStations,
+                    onSelect = { entry ->
+                        node = entry.callsign
+                        if (via.isBlank() && entry.via.isNotBlank()) via = entry.via
+                    },
                 )
                 OutlinedTextField(
                     value = via,
@@ -83,6 +88,48 @@ fun DialDialog(
             TextButton(onClick = onDismiss) { Text("Cancel") }
         },
     )
+}
+
+/**
+ * The "Node" field, editable, with an address-book autocomplete dropdown of [suggestions]
+ * (heard stations, see [SessionViewModel.heardStations]) filtered by whatever's typed so far —
+ * selecting one fills the node (and the via path too, if it's still blank).
+ */
+@Composable
+private fun NodePicker(
+    value: String,
+    onValueChange: (String) -> Unit,
+    suggestions: List<AddressBookEntry>,
+    onSelect: (AddressBookEntry) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val filtered = remember(value, suggestions) {
+        if (value.isBlank()) {
+            emptyList()
+        } else {
+            suggestions.filter {
+                it.callsign.contains(value, ignoreCase = true) || it.displayAlias?.contains(value, ignoreCase = true) == true
+            }.take(8)
+        }
+    }
+    val showMenu = expanded && filtered.isNotEmpty()
+
+    ExposedDropdownMenuBox(expanded = showMenu, onExpandedChange = { expanded = it }) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = { onValueChange(it); expanded = true },
+            label = { Text("Node") },
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp).menuAnchor(ExposedDropdownMenuAnchorType.PrimaryEditable),
+        )
+        DropdownMenu(expanded = showMenu, onDismissRequest = { expanded = false }) {
+            for (entry in filtered) {
+                DropdownMenuItem(
+                    text = { Text(entry.displayAlias?.let { "${entry.callsign} ($it)" } ?: entry.callsign) },
+                    onClick = { onSelect(entry); expanded = false },
+                )
+            }
+        }
+    }
 }
 
 @Composable

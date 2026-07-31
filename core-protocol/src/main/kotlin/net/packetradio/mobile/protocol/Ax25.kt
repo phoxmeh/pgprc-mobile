@@ -44,7 +44,22 @@ sealed interface Ax25FrameContent {
     data object Disconnect : Ax25FrameContent
     data object DisconnectedMode : Ax25FrameContent
     data object UnnumberedAcknowledge : Ax25FrameContent
-    data object FrameReject : Ax25FrameContent
+
+    /**
+     * Info field is 3 bytes per the AX.25 2.0 spec: the rejected frame's control byte, V(S)/V(R)
+     * at the time of rejection, and the W/X/Y/Z exception-condition bits (invalid control field,
+     * I-field too long, I-field present where not permitted, invalid N(R)).
+     */
+    data class FrameReject(
+        val rejectedControl: Int,
+        val vs: Int,
+        val vr: Int,
+        val w: Boolean,
+        val x: Boolean,
+        val y: Boolean,
+        val z: Boolean,
+    ) : Ax25FrameContent
+
     data class Unknown(val control: Int) : Ax25FrameContent
 }
 
@@ -53,6 +68,10 @@ data class Ax25DecodedFrame(
     val source: Ax25Address,
     val digipeaters: List<Ax25Address>,
     val content: Ax25FrameContent,
+    /** Raw control byte, before it was parsed into [content] — e.g. for FRMR generation. */
+    val control: Int,
+    /** Any bytes left over after a frame type that isn't supposed to carry an info field. Empty for I/UI/FRMR. */
+    val trailingBytes: ByteArray = ByteArray(0),
 )
 
 object Ax25 {
@@ -67,6 +86,7 @@ object Ax25 {
 
     // S-frame type-code (control bits 2-3): 0=RR, 1=RNR, 2=REJ, 3=SREJ (AX.25 2.2 only, unused here).
     private const val SS_RR = 0
+    private const val SS_RNR = 1
     private const val SS_REJ = 2
 
     /**
@@ -129,6 +149,34 @@ object Ax25 {
     fun encodeDm(source: Ax25Address, destination: Ax25Address, digipeaters: List<Ax25Address> = emptyList()): ByteArray =
         encodeControlOnlyFrame(source, destination, digipeaters, CONTROL_DM or PF_BIT, command = false)
 
+    /**
+     * Reports a protocol error on a frame we just received — always a response. See
+     * [Ax25FrameContent.FrameReject] for the info-field layout. The rejected frame's C/R bit
+     * isn't tracked anywhere in this app (a purely cosmetic bit here — see [Ax25LinkSession]),
+     * so bit 4 of the second info byte is left as if it were always a command, true for the
+     * overwhelming majority of frames a peer sends us.
+     */
+    fun encodeFrmr(
+        source: Ax25Address,
+        destination: Ax25Address,
+        digipeaters: List<Ax25Address> = emptyList(),
+        rejectedControl: Int,
+        vs: Int,
+        vr: Int,
+        w: Boolean = false,
+        x: Boolean = false,
+        y: Boolean = false,
+        z: Boolean = false,
+    ): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        out.write(encodeAddressChain(destination, source, digipeaters, command = false))
+        out.write(CONTROL_FRMR)
+        out.write(rejectedControl and 0xFF)
+        out.write(((vr and 0x07) shl 5) or 0x10 or ((vs and 0x07) shl 1))
+        out.write((if (z) 0x08 else 0) or (if (y) 0x04 else 0) or (if (x) 0x02 else 0) or (if (w) 0x01 else 0))
+        return out.toByteArray()
+    }
+
     /** Acknowledges up to N(R); [command] is only ever `false` in this app — see [Ax25LinkSession]. */
     fun encodeReceiveReady(
         source: Ax25Address,
@@ -138,6 +186,16 @@ object Ax25 {
         pollFinal: Boolean,
         command: Boolean,
     ): ByteArray = encodeControlOnlyFrame(source, destination, digipeaters, sFrameControl(SS_RR, nr, pollFinal), command)
+
+    /** Reports we can't accept more I-frames right now; [command] is only ever `false` in this app. */
+    fun encodeReceiveNotReady(
+        source: Ax25Address,
+        destination: Ax25Address,
+        digipeaters: List<Ax25Address> = emptyList(),
+        nr: Int,
+        pollFinal: Boolean,
+        command: Boolean,
+    ): ByteArray = encodeControlOnlyFrame(source, destination, digipeaters, sFrameControl(SS_RNR, nr, pollFinal), command)
 
     /** Requests retransmission starting at N(R); [command] is only ever `false` in this app. */
     fun encodeReject(
@@ -205,13 +263,24 @@ object Ax25 {
 
     private data class ParsedAddress(val address: Ax25Address, val isLast: Boolean)
 
-    private fun decodeAddress(bytes: ByteArray, offset: Int): ParsedAddress {
+    /**
+     * Decodes just the shifted-ASCII callsign + SSID out of one 7-byte AX.25 address field,
+     * ignoring the C-bit/has-been-repeated and last-address bits — the part of the format
+     * NET/ROM NODES-broadcast payloads reuse for their embedded callsign fields (see
+     * [NetRomNodes]), where those other bits don't carry the same meaning.
+     */
+    internal fun decodeCallsignField(bytes: ByteArray, offset: Int): Ax25Address {
         val chars = CharArray(6) { i -> ((bytes[offset + i].toInt() and 0xFF) shr 1).toChar() }
         val call = String(chars).trim()
         val ssidByte = bytes[offset + 6].toInt() and 0xFF
         val ssid = (ssidByte shr 1) and 0x0F
+        return Ax25Address(call, ssid)
+    }
+
+    private fun decodeAddress(bytes: ByteArray, offset: Int): ParsedAddress {
+        val ssidByte = bytes[offset + 6].toInt() and 0xFF
         val isLast = (ssidByte and 0x01) != 0
-        return ParsedAddress(Ax25Address(call, ssid), isLast)
+        return ParsedAddress(decodeCallsignField(bytes, offset), isLast)
     }
 
     /** Decodes destination/source/digipeaters and the control-byte-driven [Ax25FrameContent]. */
@@ -266,8 +335,33 @@ object Ax25 {
             (control and 0xEF) == CONTROL_DISC -> Ax25FrameContent.Disconnect
             (control and 0xEF) == CONTROL_DM -> Ax25FrameContent.DisconnectedMode
             (control and 0xEF) == CONTROL_UA -> Ax25FrameContent.UnnumberedAcknowledge
-            (control and 0xEF) == CONTROL_FRMR -> Ax25FrameContent.FrameReject
+            (control and 0xEF) == CONTROL_FRMR -> {
+                val infoBytes = bytes.copyOfRange(offset, bytes.size)
+                if (infoBytes.size >= 3) {
+                    val b2 = infoBytes[1].toInt() and 0xFF
+                    val b3 = infoBytes[2].toInt() and 0xFF
+                    Ax25FrameContent.FrameReject(
+                        rejectedControl = infoBytes[0].toInt() and 0xFF,
+                        vs = (b2 shr 1) and 0x07,
+                        vr = (b2 shr 5) and 0x07,
+                        w = (b3 and 0x01) != 0,
+                        x = (b3 and 0x02) != 0,
+                        y = (b3 and 0x04) != 0,
+                        z = (b3 and 0x08) != 0,
+                    )
+                } else {
+                    // Malformed/truncated FRMR — still worth reporting as one, just with nothing decoded.
+                    Ax25FrameContent.FrameReject(0, 0, 0, w = false, x = false, y = false, z = false)
+                }
+            }
             else -> Ax25FrameContent.Unknown(control)
+        }
+
+        val trailingBytes = when (content) {
+            // I/UI already consumed the rest of the frame as their info field; FRMR's 3-byte
+            // info field is already parsed above — anything else left over is unexpected.
+            is Ax25FrameContent.Information, is Ax25FrameContent.UnnumberedInformation, is Ax25FrameContent.FrameReject -> ByteArray(0)
+            else -> bytes.copyOfRange(offset, bytes.size)
         }
 
         return Ax25DecodedFrame(
@@ -275,6 +369,8 @@ object Ax25 {
             source = addresses[1].address,
             digipeaters = addresses.drop(2).map { it.address },
             content = content,
+            control = control,
+            trailingBytes = trailingBytes,
         )
     }
 
@@ -301,7 +397,15 @@ object Ax25 {
             Ax25FrameContent.Disconnect -> "[DISC]"
             Ax25FrameContent.DisconnectedMode -> "[DM]"
             Ax25FrameContent.UnnumberedAcknowledge -> "[UA]"
-            Ax25FrameContent.FrameReject -> "[FRMR]"
+            is Ax25FrameContent.FrameReject -> {
+                val reasons = buildString {
+                    if (content.w) append('W')
+                    if (content.x) append('X')
+                    if (content.y) append('Y')
+                    if (content.z) append('Z')
+                }
+                "[FRMR${if (reasons.isEmpty()) "" else " $reasons"}]"
+            }
             is Ax25FrameContent.Unknown -> "[?]"
         }
     }

@@ -6,20 +6,24 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import net.packetradio.mobile.data.dao.AddressBookDao
 import net.packetradio.mobile.data.dao.BeaconDao
+import net.packetradio.mobile.data.dao.HeardBeaconDao
 import net.packetradio.mobile.data.dao.HighlightRuleDao
 import net.packetradio.mobile.data.dao.MailboxMessageDao
 import net.packetradio.mobile.data.dao.NotifiedPacketDao
 import net.packetradio.mobile.data.dao.PinnedSessionDao
 import net.packetradio.mobile.data.dao.PortDao
 import net.packetradio.mobile.data.dao.QsoLogDao
+import net.packetradio.mobile.data.dao.WatchedDestinationDao
 import net.packetradio.mobile.data.entity.AddressBookEntity
 import net.packetradio.mobile.data.entity.BeaconEntity
+import net.packetradio.mobile.data.entity.HeardBeaconEntity
 import net.packetradio.mobile.data.entity.HighlightRuleEntity
 import net.packetradio.mobile.data.entity.MailboxMessageEntity
 import net.packetradio.mobile.data.entity.NotifiedPacketEntity
 import net.packetradio.mobile.data.entity.PinnedSessionEntity
 import net.packetradio.mobile.data.entity.PortEntryEntity
 import net.packetradio.mobile.data.entity.QsoLogEntryEntity
+import net.packetradio.mobile.data.entity.WatchedDestinationEntity
 
 /**
  * The list-shaped half of the desktop's config split (`ports.toml`,
@@ -38,8 +42,10 @@ import net.packetradio.mobile.data.entity.QsoLogEntryEntity
         QsoLogEntryEntity::class,
         BeaconEntity::class,
         HighlightRuleEntity::class,
+        HeardBeaconEntity::class,
+        WatchedDestinationEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = false,
 )
 abstract class PacketRadioDatabase : RoomDatabase() {
@@ -51,6 +57,8 @@ abstract class PacketRadioDatabase : RoomDatabase() {
     abstract fun qsoLogDao(): QsoLogDao
     abstract fun beaconDao(): BeaconDao
     abstract fun highlightRuleDao(): HighlightRuleDao
+    abstract fun heardBeaconDao(): HeardBeaconDao
+    abstract fun watchedDestinationDao(): WatchedDestinationDao
 
     companion object {
         @Volatile
@@ -62,7 +70,12 @@ abstract class PacketRadioDatabase : RoomDatabase() {
                     context.applicationContext,
                     PacketRadioDatabase::class.java,
                     "packet-radio.db",
-                ).build().also { instance = it }
+                )
+                    // No shipped users yet (exportSchema is already off, nothing tracks migrations) —
+                    // simplest to just rebuild rather than write a migration for the address_book
+                    // column changes and the two new tables.
+                    .fallbackToDestructiveMigration(dropAllTables = true)
+                    .build().also { instance = it }
             }
     }
 }

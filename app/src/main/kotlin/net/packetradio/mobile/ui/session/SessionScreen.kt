@@ -55,7 +55,13 @@ private val ConnectedGreen = Color(0xFF2E7D32)
 private val DrawerWidth = 300.dp
 
 @Composable
-fun SessionScreen(onOpenSettings: () -> Unit, onQuit: () -> Unit, viewModel: SessionViewModel = viewModel()) {
+fun SessionScreen(
+    onOpenSettings: () -> Unit,
+    onOpenHeardStations: () -> Unit,
+    onOpenNotifications: () -> Unit,
+    onQuit: () -> Unit,
+    viewModel: SessionViewModel = viewModel(),
+) {
     LaunchedEffect(Unit) { viewModel.bindService() }
 
     val ports by viewModel.ports.collectAsState()
@@ -199,8 +205,10 @@ fun SessionScreen(onOpenSettings: () -> Unit, onQuit: () -> Unit, viewModel: Ses
         }
 
         if (showDialDialog) {
+            val heardStations by viewModel.heardStations.collectAsState()
             DialDialog(
                 ports = ports,
+                heardStations = heardStations,
                 onDismiss = { showDialDialog = false },
                 onDial = { portId, node, via, connectImmediately ->
                     viewModel.dialTab(portId, node, via, connectImmediately)
@@ -228,6 +236,8 @@ fun SessionScreen(onOpenSettings: () -> Unit, onQuit: () -> Unit, viewModel: Ses
                     onDeletePort = viewModel::deletePort,
                     onMoveUp = viewModel::movePortUp,
                     onMoveDown = viewModel::movePortDown,
+                    onOpenNotifications = { rightDrawerOpen = false; onOpenNotifications() },
+                    onOpenHeardStations = { rightDrawerOpen = false; onOpenHeardStations() },
                 )
             }
         }

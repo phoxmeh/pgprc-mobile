@@ -86,7 +86,12 @@ class Ax25Test {
         assertEquals(Ax25FrameContent.Disconnect, Ax25.decodeFrame(frameWithControl(0x43))!!.content)
         assertEquals(Ax25FrameContent.DisconnectedMode, Ax25.decodeFrame(frameWithControl(0x0F))!!.content)
         assertEquals(Ax25FrameContent.UnnumberedAcknowledge, Ax25.decodeFrame(frameWithControl(0x63))!!.content)
-        assertEquals(Ax25FrameContent.FrameReject, Ax25.decodeFrame(frameWithControl(0x87))!!.content)
+        // No 3-byte FRMR info field follows here — decode still recognizes the frame type,
+        // just with nothing to report (see the dedicated round-trip test for the real payload).
+        assertEquals(
+            Ax25FrameContent.FrameReject(0, 0, 0, w = false, x = false, y = false, z = false),
+            Ax25.decodeFrame(frameWithControl(0x87))!!.content,
+        )
     }
 
     @Test
@@ -157,5 +162,34 @@ class Ax25Test {
         val sourceByteResp = response[13].toInt() and 0xFF
         assertTrue("destination C-bit clear on a response frame", (destByteResp and 0x80) == 0)
         assertTrue("source C-bit set on a response frame", (sourceByteResp and 0x80) != 0)
+    }
+
+    @Test
+    fun `encodeFrmr round-trips the rejected control byte, V(S) V(R), and the W X Y Z condition bits`() {
+        val encoded = Ax25.encodeFrmr(a, b, rejectedControl = 0x53, vs = 3, vr = 5, x = true, z = true)
+        val content = Ax25.decodeFrame(encoded)!!.content as Ax25FrameContent.FrameReject
+        assertEquals(0x53, content.rejectedControl)
+        assertEquals(3, content.vs)
+        assertEquals(5, content.vr)
+        assertTrue(content.x)
+        assertTrue(content.z)
+        assertTrue("w and y weren't requested", !content.w && !content.y)
+    }
+
+    @Test
+    fun `decodeFrame exposes the raw control byte and any unexpected trailing bytes`() {
+        val rr = Ax25.decodeFrame(Ax25.encodeReceiveReady(a, b, nr = 2, pollFinal = false, command = false))!!
+        assertEquals(0x41, rr.control) // RR, N(R)=2, no P/F: (2 << 5) | 0x01
+        assertTrue("a well-formed RR carries no info field", rr.trailingBytes.isEmpty())
+
+        // An S-frame with extra bytes tacked on: not permitted by the spec (used by
+        // Ax25LinkSession's FRMR condition Y), decode should still surface them rather than
+        // silently drop them.
+        val malformed = Ax25.encodeReceiveReady(a, b, nr = 2, pollFinal = false, command = false) + byteArrayOf(0x01, 0x02)
+        val decoded = Ax25.decodeFrame(malformed)!!
+        assertEquals(2, decoded.trailingBytes.size)
+
+        val ui = Ax25.decodeFrame(Ax25.encodeUiFrame(a, b, info = "hi".toByteArray()))!!
+        assertTrue("an I-field carrying frame's payload isn't 'trailing'", ui.trailingBytes.isEmpty())
     }
 }

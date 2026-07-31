@@ -176,6 +176,9 @@ class AgwpeRunner(private val config: PortConfig.Agwpe) : PortRunner {
                 val line = "${frame.callFrom} > ${frame.callTo} [${frame.dataKind}]${pidSuffix(frame.pid)}: $text"
                 val to = if (frame.dataKind == 'U') frame.callTo else null
                 events.send(PortEvent.Monitor(line, to))
+                if (frame.dataKind == 'U') {
+                    events.send(PortEvent.UnprotoReceived(frame.callFrom, frame.callTo, frame.pid, frame.data))
+                }
             }
             else -> {}
         }

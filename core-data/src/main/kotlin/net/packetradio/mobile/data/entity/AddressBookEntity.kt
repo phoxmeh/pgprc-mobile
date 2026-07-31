@@ -8,32 +8,38 @@ import net.packetradio.mobile.model.AddressBookEntry
 data class AddressBookEntity(
     @PrimaryKey val callsign: String,
     val name: String?,
-    val alias: String?,
+    val userAlias: String?,
+    val autoAlias: String?,
     val location: String?,
     val notes: String?,
     val lastHeard: String?,
     val heardCount: Int,
     val via: String,
+    val heardDirectly: Boolean,
 )
 
 fun AddressBookEntry.toEntity(): AddressBookEntity = AddressBookEntity(
     callsign = callsign,
     name = name,
-    alias = alias,
+    userAlias = userAlias,
+    autoAlias = autoAlias,
     location = location,
     notes = notes,
     lastHeard = lastHeard,
     heardCount = heardCount,
     via = via,
+    heardDirectly = heardDirectly,
 )
 
 fun AddressBookEntity.toDomain(): AddressBookEntry = AddressBookEntry(
     callsign = callsign,
     name = name,
-    alias = alias,
+    userAlias = userAlias,
+    autoAlias = autoAlias,
     location = location,
     notes = notes,
     lastHeard = lastHeard,
     heardCount = heardCount,
     via = via,
+    heardDirectly = heardDirectly,
 )

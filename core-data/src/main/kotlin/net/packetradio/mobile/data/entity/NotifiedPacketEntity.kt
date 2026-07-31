@@ -6,7 +6,7 @@ import net.packetradio.mobile.model.NotifiedPacket
 
 @Entity(tableName = "notified_packets")
 data class NotifiedPacketEntity(
-    @PrimaryKey val id: Long,
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val portId: String,
     val line: String,
     val timestamp: String,

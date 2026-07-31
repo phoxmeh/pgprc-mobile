@@ -39,6 +39,7 @@ internal class KissConnectedModeDriver(
 ) {
     private class SessionEntry(val session: Ax25LinkSession, val remote: String) {
         var t1Job: Job? = null
+        var t3Job: Job? = null
     }
 
     private val myCall = Ax25Address.parse(myCallRaw)
@@ -47,9 +48,13 @@ internal class KissConnectedModeDriver(
     private val idCounter = AtomicLong(1)
 
     private val t1Fired = Channel<ConnectionId>(Channel.UNLIMITED)
+    private val t3Fired = Channel<ConnectionId>(Channel.UNLIMITED)
 
     /** A `select` loop should listen on this and call [onTimerFired] with whatever id it yields. */
     val timerFiredEvents: ReceiveChannel<ConnectionId> get() = t1Fired
+
+    /** A `select` loop should listen on this and call [onT3Fired] with whatever id it yields. */
+    val t3FiredEvents: ReceiveChannel<ConnectionId> get() = t3Fired
 
     suspend fun openConnection(remote: String, via: List<String>) {
         val id = remoteToId[remote] ?: run {
@@ -74,9 +79,20 @@ internal class KissConnectedModeDriver(
         apply(id, entry, entry.session.handle(Ax25LinkSession.Event.UserDisconnect))
     }
 
+    /** Tells the link whether we can currently accept more I-frames — see [Ax25LinkSession.Event.SetLocalBusy]. */
+    suspend fun setBusy(id: ConnectionId, busy: Boolean) {
+        val entry = sessions[id] ?: return
+        apply(id, entry, entry.session.handle(Ax25LinkSession.Event.SetLocalBusy(busy)))
+    }
+
     suspend fun onTimerFired(id: ConnectionId) {
         val entry = sessions[id] ?: return
         apply(id, entry, entry.session.handle(Ax25LinkSession.Event.T1Expired))
+    }
+
+    suspend fun onT3Fired(id: ConnectionId) {
+        val entry = sessions[id] ?: return
+        apply(id, entry, entry.session.handle(Ax25LinkSession.Event.T3Expired))
     }
 
     /**
@@ -87,10 +103,11 @@ internal class KissConnectedModeDriver(
      */
     suspend fun frameReceived(frame: Ax25DecodedFrame) {
         val remote = frame.source.label()
+        val event = Ax25LinkSession.Event.FrameReceived(frame.content, frame.control, frame.trailingBytes.isNotEmpty())
         val existingId = remoteToId[remote]
         if (existingId != null) {
             val entry = sessions.getValue(existingId)
-            apply(existingId, entry, entry.session.handle(Ax25LinkSession.Event.FrameReceived(frame.content)))
+            apply(existingId, entry, entry.session.handle(event))
             return
         }
         if (frame.content != Ax25FrameContent.SetAsynchronousBalancedMode) {
@@ -104,12 +121,15 @@ internal class KissConnectedModeDriver(
         remoteToId[remote] = id
         events.send(PortEvent.StationHeard(remote))
         events.send(PortEvent.ConnectionOpened(id, remote))
-        apply(id, entry, session.handle(Ax25LinkSession.Event.FrameReceived(frame.content)))
+        apply(id, entry, session.handle(event))
     }
 
-    /** Cancels every session's T1 job — call once from the runner's `finally`, socket already closing. */
+    /** Cancels every session's T1/T3 jobs — call once from the runner's `finally`, socket already closing. */
     fun shutdown() {
-        sessions.values.forEach { it.t1Job?.cancel() }
+        sessions.values.forEach {
+            it.t1Job?.cancel()
+            it.t3Job?.cancel()
+        }
     }
 
     private suspend fun apply(id: ConnectionId, entry: SessionEntry, effects: List<Ax25LinkSession.Effect>) {
@@ -127,6 +147,7 @@ internal class KissConnectedModeDriver(
                     events.send(PortEvent.ConnStateChanged(id, connState))
                     if (effect.state == Ax25LinkSession.LinkState.DISCONNECTED) {
                         entry.t1Job?.cancel()
+                        entry.t3Job?.cancel()
                         sessions.remove(id)
                         remoteToId.remove(entry.remote)
                         events.send(PortEvent.ConnectionClosed(id))
@@ -143,11 +164,25 @@ internal class KissConnectedModeDriver(
                     entry.t1Job?.cancel()
                     entry.t1Job = null
                 }
+                Ax25LinkSession.Effect.StartT3 -> {
+                    entry.t3Job?.cancel()
+                    entry.t3Job = scope.launch {
+                        delay(T3_MS)
+                        t3Fired.send(id)
+                    }
+                }
+                Ax25LinkSession.Effect.StopT3 -> {
+                    entry.t3Job?.cancel()
+                    entry.t3Job = null
+                }
             }
         }
     }
 
     private companion object {
         const val T1_MS = 3000L
+
+        /** How long the link can stay idle before we send a status poll to check it's still there. */
+        const val T3_MS = 180_000L
     }
 }
