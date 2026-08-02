@@ -23,6 +23,10 @@ class HeardStationsViewModel(application: Application) : AndroidViewModel(applic
     fun setUserAlias(callsign: String, alias: String) {
         viewModelScope.launch { app.addressBook.setUserAlias(callsign, alias) }
     }
+
+    fun deleteEntry(callsign: String) {
+        viewModelScope.launch { app.addressBook.delete(callsign) }
+    }
 }
 
 /** Backs [HeardStationDetailScreen] for one [callsign]. */
@@ -41,5 +45,9 @@ class HeardStationDetailViewModel(application: Application) : AndroidViewModel(a
 
     fun setUserAlias(callsign: String, alias: String) {
         viewModelScope.launch { app.addressBook.setUserAlias(callsign, alias) }
+    }
+
+    fun deleteEntry(callsign: String) {
+        viewModelScope.launch { app.addressBook.delete(callsign) }
     }
 }

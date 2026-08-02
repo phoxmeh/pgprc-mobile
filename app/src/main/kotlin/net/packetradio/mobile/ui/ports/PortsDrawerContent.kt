@@ -1,7 +1,17 @@
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@file:OptIn(
+    androidx.compose.material3.ExperimentalMaterial3Api::class,
+    androidx.compose.foundation.ExperimentalFoundationApi::class,
+)
 
 package net.packetradio.mobile.ui.ports
 
+import androidx.compose.animation.animateColor
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -44,7 +54,9 @@ import net.packetradio.mobile.ui.common.DrawerRow
 import net.packetradio.mobile.ui.session.PortStatus
 
 private val ConnectedColor = Color(0xFF2E7D32)
+private val ConnectingColor = Color(0xFF1565C0)
 private val ErrorColor = Color(0xFFF9A825)
+private val TimeoutColor = Color(0xFFC62828)
 
 /**
  * The right-hand drawer's content: every configured port as a full-width
@@ -52,12 +64,14 @@ private val ErrorColor = Color(0xFFF9A825)
  * — see `SessionViewModel.togglePort`), colored by [PortStatus]. Edit/
  * delete/reorder live behind each row's overflow icon instead of their own
  * dedicated buttons, keeping the row itself a clean single toggle.
+ * Long-pressing a yellow (ERROR) or red (TIMEOUT) port clears its status.
  */
 @Composable
 fun PortsDrawerContent(
     ports: List<PortEntry>,
     portStatuses: Map<String, PortStatus>,
     onTogglePort: (String) -> Unit,
+    onClearPortStatus: (String) -> Unit = {},
     onAddPort: (name: String, config: PortConfig, autoconnect: Boolean) -> Unit,
     onUpdatePort: (PortEntry) -> Unit,
     onDeletePort: (String) -> Unit,
@@ -91,6 +105,7 @@ fun PortsDrawerContent(
                     isFirst = index == 0,
                     isLast = index == ports.lastIndex,
                     onToggle = { onTogglePort(entry.id) },
+                    onClearStatus = { onClearPortStatus(entry.id) },
                     onEdit = { editing = entry },
                     onDelete = { pendingDelete = entry },
                     onMoveUp = { onMoveUp(entry.id) },
@@ -156,28 +171,47 @@ private fun PortToggleRow(
     isFirst: Boolean,
     isLast: Boolean,
     onToggle: () -> Unit,
+    onClearStatus: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
-    val color = when (status) {
+
+    val staticColor = when (status) {
         PortStatus.OFF -> MaterialTheme.colorScheme.surfaceVariant
+        PortStatus.CONNECTING -> ConnectingColor
         PortStatus.CONNECTED -> ConnectedColor
         PortStatus.ERROR -> ErrorColor
+        PortStatus.TIMEOUT -> TimeoutColor
     }
+
+    // Pulse the CONNECTING color between full opacity and a dimmer shade
+    val infiniteTransition = rememberInfiniteTransition(label = "port-pulse")
+    val pulseColor by infiniteTransition.animateColor(
+        initialValue = ConnectingColor,
+        targetValue = ConnectingColor.copy(alpha = 0.4f),
+        animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
+        label = "connecting-pulse",
+    )
+
+    val color = if (status == PortStatus.CONNECTING) pulseColor else staticColor
     val onColor = when (status) {
         PortStatus.OFF -> MaterialTheme.colorScheme.onSurfaceVariant
         else -> Color.White
     }
+    val canClear = status == PortStatus.ERROR || status == PortStatus.TIMEOUT
 
     Surface(
-        onClick = onToggle,
         color = color,
         contentColor = onColor,
         shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+            .combinedClickable(
+                onClick = onToggle,
+                onLongClick = { if (canClear) onClearStatus() },
+            ),
     ) {
         Row(Modifier.padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("$index", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(end = 12.dp))

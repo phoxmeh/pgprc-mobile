@@ -31,6 +31,10 @@ data class SessionTabState(
     val bytesSent: Long = 0,
     val bytesReceived: Long = 0,
     val inputText: String = "",
+    /** True when the user sent CloseConnection — distinguishes a clean disconnect from an unexpected drop. */
+    val initiatedClose: Boolean = false,
+    /** True once this connection reached CONNECTED at least once — distinguishes a remote DISC (graceful) from a failed SABM. */
+    val wasConnected: Boolean = false,
 )
 
 /** Whether this tab has a live, acknowledged two-way connection right now. */
@@ -48,7 +52,7 @@ fun SessionTabState.tabName(ports: List<PortEntry>): String {
 }
 
 /** A port's connection state as shown by its toggle button in the Ports drawer. */
-enum class PortStatus { OFF, CONNECTED, ERROR }
+enum class PortStatus { OFF, CONNECTING, CONNECTED, ERROR, TIMEOUT }
 
 fun formatBytes(bytes: Long): String = when {
     bytes < 1024 -> "$bytes B"

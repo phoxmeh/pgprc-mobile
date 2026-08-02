@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -18,7 +19,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import net.packetradio.mobile.model.HighlightPrefs
 import net.packetradio.mobile.model.defaultHighlightRules
 
@@ -34,7 +37,9 @@ data class MonitorLine(val text: String, val unproto: Boolean = false)
  * is a separate, persistent preference (defaults on) that applies regardless
  * of [showFilter] — pass [onUnprotoOnlyChanged] to also show its checkbox
  * next to the filter field (omit it for a line list, like the Log tab, where
- * "unproto" has no meaning).
+ * "unproto" has no meaning). [fontSizeSp] controls the text size for all lines.
+ * Unproto/monitor packets are rendered as two lines (header + payload) when
+ * [line.unproto] is true and a `: ` separator is present in the line.
  */
 @Composable
 fun MonitorContent(
@@ -46,12 +51,15 @@ fun MonitorContent(
     showFilter: Boolean,
     unprotoOnly: Boolean = false,
     onUnprotoOnlyChanged: ((Boolean) -> Unit)? = null,
+    fontSizeSp: Float = 12f,
     modifier: Modifier = Modifier,
 ) {
     val byUnproto = if (unprotoOnly) lines.filter { it.unproto } else lines
-    val filtered = if (!showFilter || filter.isBlank()) byUnproto else byUnproto.filter { it.text.contains(filter, ignoreCase = true) }
+    val displayed = if (!showFilter || filter.isBlank()) byUnproto else byUnproto.filter { it.text.contains(filter, ignoreCase = true) }
     val mutedColor = MaterialTheme.colorScheme.onSurfaceVariant
     val errorColor = MaterialTheme.colorScheme.error
+    val rules = defaultHighlightRules()
+    val monoStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace, fontSize = fontSizeSp.sp)
 
     Column(modifier.fillMaxSize().padding(horizontal = 12.dp).padding(top = 4.dp, bottom = 12.dp)) {
         if (showFilter) {
@@ -60,6 +68,8 @@ fun MonitorContent(
                     value = filter,
                     onValueChange = onFilterChanged,
                     label = { Text("Filter") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None),
                     modifier = Modifier.weight(1f),
                 )
                 if (onUnprotoOnlyChanged != null) {
@@ -71,16 +81,36 @@ fun MonitorContent(
             }
         }
         val listState = rememberLazyListState()
-        LaunchedEffect(filtered.size) {
-            if (filtered.isNotEmpty()) listState.scrollToItem(filtered.size - 1)
+        LaunchedEffect(displayed.size) {
+            if (displayed.isNotEmpty()) listState.scrollToItem(displayed.size - 1)
         }
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            items(filtered) { line ->
-                Text(
-                    highlightMonitorLine(line.text, myCall, highlightPrefs, defaultHighlightRules(), mutedColor, errorColor),
-                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                )
+            items(displayed) { line ->
+                val annotated = highlightMonitorLine(line.text, myCall, highlightPrefs, rules, mutedColor, errorColor)
+                val splitAt = if (line.unproto) monitorPayloadStart(line.text) else -1
+                if (splitAt > 0) {
+                    Text(annotated.subSequence(0, splitAt - 1), style = monoStyle)
+                    Text(
+                        annotated.subSequence(splitAt, annotated.length),
+                        style = monoStyle,
+                        modifier = Modifier.padding(start = 12.dp, bottom = 2.dp),
+                    )
+                } else {
+                    Text(annotated, style = monoStyle)
+                }
             }
         }
     }
+}
+
+/**
+ * Finds the index of the payload start (after `: `) in a monitor line like
+ * `[0] W1XY>APRS [UI] [PID: NET/ROM]: text`. Anchors to the LAST `]` so that
+ * `[PID: ...]` suffixes (which contain `: `) don't cause a premature split.
+ */
+private fun monitorPayloadStart(line: String): Int {
+    val lastBracket = line.lastIndexOf(']')
+    if (lastBracket < 0) return -1
+    val colonIdx = line.indexOf(": ", lastBracket)
+    return if (colonIdx >= lastBracket) colonIdx + 2 else -1
 }

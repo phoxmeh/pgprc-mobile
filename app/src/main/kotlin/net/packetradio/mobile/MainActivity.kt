@@ -78,7 +78,11 @@ class MainActivity : ComponentActivity() {
                         arguments = listOf(navArgument("callsign") { type = NavType.StringType }),
                     ) { backStackEntry ->
                         val callsign = backStackEntry.arguments?.getString("callsign").orEmpty()
-                        HeardStationDetailScreen(callsign = callsign, onBack = { navController.popBackStack() })
+                        HeardStationDetailScreen(
+                            callsign = callsign,
+                            onBack = { navController.popBackStack() },
+                            onDelete = { navController.popBackStack() },
+                        )
                     }
                     composable("notifications") {
                         NotificationsScreen(

@@ -22,27 +22,38 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.FilterAlt
+import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
@@ -53,6 +64,10 @@ private const val MONITOR_TAB_ID = "__monitor__"
 private const val LOG_TAB_ID = "__log__"
 private val ConnectedGreen = Color(0xFF2E7D32)
 private val DrawerWidth = 300.dp
+private const val FONT_SIZE_MIN = 8f
+private const val FONT_SIZE_MAX = 28f
+private const val FONT_SIZE_DEFAULT = 12f
+private const val FONT_SIZE_STEP = 2f
 
 @Composable
 fun SessionScreen(
@@ -77,10 +92,14 @@ fun SessionScreen(
     val highlightPrefs by viewModel.highlightPrefs.collectAsState()
     val myCall by viewModel.myCall.collectAsState()
 
+    val showFirstRun by viewModel.showFirstRun.collectAsState()
+
     var leftDrawerOpen by remember { mutableStateOf(false) }
     var rightDrawerOpen by remember { mutableStateOf(false) }
     var showDialDialog by remember { mutableStateOf(false) }
     var filterVisible by remember { mutableStateOf(false) }
+    var fontSizeSp by remember { mutableFloatStateOf(FONT_SIZE_DEFAULT) }
+    var showFontSizeMenu by remember { mutableStateOf(false) }
 
     // This is the nav graph's root with nothing to pop back to, so system Back would otherwise
     // fall through to Android's default: finish the Activity. Finishing the task's only Activity
@@ -118,7 +137,39 @@ fun SessionScreen(
                     actions = {
                         if (frontId == MONITOR_TAB_ID || frontId == LOG_TAB_ID) {
                             IconButton(onClick = { filterVisible = !filterVisible }) {
-                                Icon(Icons.Filled.FilterAlt, contentDescription = "Toggle filter")
+                                Icon(
+                                    Icons.Filled.FilterAlt,
+                                    contentDescription = "Toggle filter",
+                                    tint = if (filterVisible) MaterialTheme.colorScheme.primary else LocalContentColor.current,
+                                )
+                            }
+                        }
+                        // Font-size button — shown on all tabs (monitor, log, and connected sessions)
+                        Box {
+                            IconButton(onClick = { showFontSizeMenu = true }) {
+                                Icon(Icons.Filled.FormatSize, contentDescription = "Font size")
+                            }
+                            DropdownMenu(
+                                expanded = showFontSizeMenu,
+                                onDismissRequest = { showFontSizeMenu = false },
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center,
+                                    modifier = Modifier.padding(horizontal = 4.dp),
+                                ) {
+                                    IconButton(onClick = { fontSizeSp = (fontSizeSp - FONT_SIZE_STEP).coerceAtLeast(FONT_SIZE_MIN) }) {
+                                        Icon(Icons.Filled.Remove, contentDescription = "Smaller text")
+                                    }
+                                    Text(
+                                        "${fontSizeSp.toInt()}sp",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        modifier = Modifier.padding(horizontal = 8.dp),
+                                    )
+                                    IconButton(onClick = { fontSizeSp = (fontSizeSp + FONT_SIZE_STEP).coerceAtMost(FONT_SIZE_MAX) }) {
+                                        Icon(Icons.Filled.Add, contentDescription = "Larger text")
+                                    }
+                                }
                             }
                         }
                         IconButton(onClick = { rightDrawerOpen = true; leftDrawerOpen = false }) {
@@ -143,6 +194,7 @@ fun SessionScreen(
                                 showFilter = filterVisible,
                                 unprotoOnly = unprotoOnly,
                                 onUnprotoOnlyChanged = viewModel::setUnprotoOnly,
+                                fontSizeSp = fontSizeSp,
                                 modifier = Modifier.weight(1f),
                             )
                             AdHocUnprotoBar(
@@ -163,6 +215,7 @@ fun SessionScreen(
                         myCall,
                         highlightPrefs,
                         showFilter = filterVisible,
+                        fontSizeSp = fontSizeSp,
                     )
                     frontTab != null -> SessionTabContent(
                         tab = frontTab,
@@ -170,6 +223,7 @@ fun SessionScreen(
                         portConnected = portStatuses[frontTab.portId] == PortStatus.CONNECTED,
                         myCall = myCall,
                         highlightPrefs = highlightPrefs,
+                        fontSizeSp = fontSizeSp,
                         onToggleNodeConnection = { viewModel.toggleNodeConnection(frontTab.id) },
                         onInputChanged = { viewModel.setTabInput(frontTab.id, it) },
                         onSend = { viewModel.sendTabInput(frontTab.id) },
@@ -231,6 +285,7 @@ fun SessionScreen(
                     ports = ports,
                     portStatuses = portStatuses,
                     onTogglePort = viewModel::togglePort,
+                    onClearPortStatus = viewModel::clearPortStatus,
                     onAddPort = viewModel::addPort,
                     onUpdatePort = viewModel::updatePort,
                     onDeletePort = viewModel::deletePort,
@@ -240,6 +295,10 @@ fun SessionScreen(
                     onOpenHeardStations = { rightDrawerOpen = false; onOpenHeardStations() },
                 )
             }
+        }
+
+        if (showFirstRun) {
+            FirstRunDialog(onSave = viewModel::saveMyCall)
         }
     }
 }
@@ -287,6 +346,35 @@ private fun StatusBar(tab: SessionTabState?) {
             }
         }
     }
+}
+
+@Composable
+private fun FirstRunDialog(onSave: (String) -> Unit) {
+    var callsign by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text("Welcome to PGPRC Mobile") },
+        text = {
+            Column {
+                Text("Enter your callsign to get started.", style = MaterialTheme.typography.bodyMedium)
+                OutlinedTextField(
+                    value = callsign,
+                    onValueChange = { callsign = it },
+                    label = { Text("My callsign") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None),
+                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = callsign.isNotBlank(),
+                onClick = { onSave(callsign) },
+            ) { Text("Get Started") }
+        },
+        dismissButton = {},
+    )
 }
 
 /** Ticks once a second while [since] is non-null, formatted `mm:ss` (or `h:mm:ss` past an hour). */

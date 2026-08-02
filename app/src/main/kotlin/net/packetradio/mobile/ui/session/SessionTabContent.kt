@@ -2,6 +2,7 @@ package net.packetradio.mobile.ui.session
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,7 +14,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Call
@@ -36,8 +40,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import net.packetradio.mobile.model.HighlightPrefs
 import net.packetradio.mobile.model.defaultHighlightRules
 
@@ -45,6 +51,8 @@ import net.packetradio.mobile.model.defaultHighlightRules
  * A dialed session tab. Identity (node/via/port) is fixed at creation (see
  * [SessionViewModel.dialTab]) and shown read-only here — there's nothing to
  * edit, redialing a different destination means opening a new tab.
+ * Word wrap is disabled for the scrollback; the view scrolls both vertically
+ * and horizontally to accommodate long BBS menu lines without breaking the column layout.
  */
 @Composable
 fun SessionTabContent(
@@ -53,6 +61,7 @@ fun SessionTabContent(
     portConnected: Boolean,
     myCall: String,
     highlightPrefs: HighlightPrefs,
+    fontSizeSp: Float = 12f,
     onToggleNodeConnection: () -> Unit,
     onInputChanged: (String) -> Unit,
     onSend: () -> Unit,
@@ -62,6 +71,7 @@ fun SessionTabContent(
     val density = LocalDensity.current
     val mutedColor = MaterialTheme.colorScheme.onSurfaceVariant
     val errorColor = MaterialTheme.colorScheme.error
+    val monoStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace, fontSize = fontSizeSp.sp)
     ClearFocusWhenKeyboardHides()
 
     Column(Modifier.fillMaxSize().padding(12.dp).clearFocusOnTapOutside()) {
@@ -70,6 +80,7 @@ fun SessionTabContent(
             height = monitorHeight,
             myCall = myCall,
             highlightPrefs = highlightPrefs,
+            fontSizeSp = fontSizeSp,
             mutedColor = mutedColor,
             errorColor = errorColor,
         )
@@ -89,18 +100,25 @@ fun SessionTabContent(
             )
         }
 
-        val listState = rememberLazyListState()
+        // Scrollback — word wrap disabled; scrollable both axes so long BBS lines don't break layout
+        val vScrollState = rememberScrollState()
+        val hScrollState = rememberScrollState()
         LaunchedEffect(tab.lines.size) {
-            if (tab.lines.isNotEmpty()) listState.scrollToItem(tab.lines.size - 1)
+            vScrollState.animateScrollTo(vScrollState.maxValue)
         }
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxWidth().weight(1f).padding(top = 8.dp),
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .padding(top = 8.dp)
+                .verticalScroll(vScrollState)
+                .horizontalScroll(hScrollState),
         ) {
-            items(tab.lines) { line ->
+            for (line in tab.lines) {
                 Text(
                     highlightMonitorLine(line, myCall, highlightPrefs, defaultHighlightRules(), mutedColor, errorColor),
-                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    style = monoStyle,
+                    softWrap = false,
                 )
             }
         }
@@ -119,6 +137,7 @@ fun SessionTabContent(
                 value = tab.inputText,
                 onValueChange = onInputChanged,
                 label = { Text("Message") },
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None),
                 modifier = Modifier.weight(1f),
             )
             IconButton(onClick = onSend, enabled = live) {
@@ -135,10 +154,12 @@ private fun MiniMonitor(
     height: Dp,
     myCall: String,
     highlightPrefs: HighlightPrefs,
+    fontSizeSp: Float,
     mutedColor: Color,
     errorColor: Color,
 ) {
     val listState = rememberLazyListState()
+    val monoStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace, fontSize = fontSizeSp.sp)
     LaunchedEffect(monitorLines.size) {
         if (monitorLines.isNotEmpty()) listState.scrollToItem(monitorLines.size - 1)
     }
@@ -150,7 +171,7 @@ private fun MiniMonitor(
             items(monitorLines.takeLast(50)) { line ->
                 Text(
                     highlightMonitorLine(line.text, myCall, highlightPrefs, defaultHighlightRules(), mutedColor, errorColor),
-                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    style = monoStyle,
                 )
             }
         }

@@ -114,8 +114,8 @@ fun PortConfig.kindLabel(): String = when (this) {
  * yet — its `PortRunner` doesn't exist at all — so it stays excluded until that lands.
  */
 fun PortConfig.supportsConnect(): Boolean = when (this) {
-    is PortConfig.Agwpe, is PortConfig.KissTcp, is PortConfig.BluetoothKiss -> true
-    is PortConfig.Telnet, is PortConfig.Ssh, is PortConfig.UsbSerialKiss -> false
+    is PortConfig.Agwpe, is PortConfig.KissTcp, is PortConfig.BluetoothKiss, is PortConfig.Telnet -> true
+    is PortConfig.Ssh, is PortConfig.UsbSerialKiss -> false
 }
 
 /** Whether this port kind can send one-shot unconnected (UI) frames. */

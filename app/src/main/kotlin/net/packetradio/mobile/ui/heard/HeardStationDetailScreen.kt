@@ -9,8 +9,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -20,6 +23,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -29,6 +33,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import net.packetradio.mobile.model.HeardBeaconPacket
@@ -37,11 +42,13 @@ import net.packetradio.mobile.model.HeardBeaconPacket
 fun HeardStationDetailScreen(
     callsign: String,
     onBack: () -> Unit,
+    onDelete: () -> Unit = {},
     viewModel: HeardStationDetailViewModel = viewModel(),
 ) {
     val entry by remember(callsign) { viewModel.entry(callsign) }.collectAsState()
     val beacons by remember(callsign) { viewModel.beacons(callsign) }.collectAsState()
     var alias by remember { mutableStateOf("") }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
 
     LaunchedEffect(entry?.userAlias) { alias = entry?.userAlias ?: "" }
 
@@ -52,6 +59,11 @@ fun HeardStationDetailScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { showDeleteConfirm = true }) {
+                        Icon(Icons.Filled.Delete, contentDescription = "Remove station")
                     }
                 },
             )
@@ -75,6 +87,7 @@ fun HeardStationDetailScreen(
                 onValueChange = { alias = it },
                 label = { Text("Alias (used when dialing)") },
                 placeholder = { current.autoAlias?.let { Text(it) } },
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None),
                 modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
             )
             Button(
@@ -108,6 +121,22 @@ fun HeardStationDetailScreen(
                 }
             }
         }
+    }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("Remove $callsign?") },
+            text = { Text("This will remove $callsign from the heard stations list. It will re-appear the next time a frame from this station is heard.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.deleteEntry(callsign)
+                    showDeleteConfirm = false
+                    onDelete()
+                }) { Text("Remove") }
+            },
+            dismissButton = { TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") } },
+        )
     }
 }
 

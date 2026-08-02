@@ -105,16 +105,16 @@ fun TabsDrawerContent(
         HorizontalDivider(Modifier.padding(vertical = 4.dp))
         Column(Modifier.padding(bottom = 12.dp)) {
             DrawerRow(
-                label = "Quit",
-                selected = false,
-                leadingIcon = Icons.AutoMirrored.Filled.ExitToApp,
-                onClick = onQuit,
-            )
-            DrawerRow(
                 label = "Settings",
                 selected = false,
                 leadingIcon = Icons.Filled.Settings,
                 onClick = onOpenSettings,
+            )
+            DrawerRow(
+                label = "Quit",
+                selected = false,
+                leadingIcon = Icons.AutoMirrored.Filled.ExitToApp,
+                onClick = onQuit,
             )
         }
     }

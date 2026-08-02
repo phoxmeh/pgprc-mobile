@@ -106,6 +106,10 @@ class SessionViewModel(application: Application) : AndroidViewModel(application)
     val myCall: StateFlow<String> = app.preferences.uiPrefs.map { it.defaultCall ?: "" }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
 
+    /** True once preferences load and no callsign has been configured — triggers the first-run dialog. */
+    val showFirstRun: StateFlow<Boolean> = app.preferences.uiPrefs.map { it.defaultCall.isNullOrBlank() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
     // (portId, remote) -> tabId, while a tab's OpenConnection is in flight.
     private val pendingOpens = ConcurrentHashMap<Pair<String, String>, String>()
 
@@ -250,6 +254,7 @@ class SessionViewModel(application: Application) : AndroidViewModel(application)
 
         val connectionId = tab.connectionId
         if (connectionId != null) {
+            updateTab(tabId) { it.copy(initiatedClose = true) }
             viewModelScope.launch { svc.portManager.sendCommand(port.id, PortCommand.CloseConnection(connectionId)) }
         } else {
             pendingOpens[port.id to tab.node.trim().uppercase()] = tabId
@@ -311,11 +316,24 @@ class SessionViewModel(application: Application) : AndroidViewModel(application)
         val svc = service ?: return
         val port = ports.value.find { it.id == portId } ?: return
         if (svc.portManager.isConnected(portId)) {
+            // Pre-clear to OFF so the incoming PortDisconnected event doesn't see CONNECTED and
+            // misclassify this user-initiated disconnect as an unexpected timeout.
+            _portStatuses.update { it + (portId to PortStatus.OFF) }
             viewModelScope.launch { svc.portManager.disconnect(portId) }
         } else {
-            _portStatuses.update { it - portId } // clear a stale ERROR before retrying
+            _portStatuses.update { it + (portId to PortStatus.CONNECTING) }
             svc.portManager.connect(portId, port.config)
         }
+    }
+
+    /** Clears a sticky ERROR or TIMEOUT status back to OFF (called from a long-press on the port row). */
+    fun clearPortStatus(portId: String) {
+        _portStatuses.update { it + (portId to PortStatus.OFF) }
+    }
+
+    fun saveMyCall(call: String) {
+        val trimmed = call.trim().uppercase().ifBlank { null }
+        viewModelScope.launch { app.preferences.updateUiPrefs { it.copy(defaultCall = trimmed) } }
     }
 
     fun addPort(name: String, config: PortConfig, autoconnect: Boolean) {
@@ -365,7 +383,13 @@ class SessionViewModel(application: Application) : AndroidViewModel(application)
                 firePendingOpensFor(portId)
             }
             is PortEvent.PortDisconnected -> {
-                _portStatuses.update { it + (portId to PortStatus.OFF) }
+                val currentStatus = _portStatuses.value[portId]
+                val newStatus = when {
+                    currentStatus == PortStatus.CONNECTED -> PortStatus.TIMEOUT
+                    currentStatus == PortStatus.ERROR -> PortStatus.ERROR // keep visible until user clears
+                    else -> PortStatus.OFF
+                }
+                _portStatuses.update { it + (portId to newStatus) }
                 val suffix = event.reason?.let { ": $it" }.orEmpty()
                 appendLogLine("[${portLabel(portId)}] Port disconnected$suffix")
                 clearBoundConnectionsForPort(portId)
@@ -392,17 +416,31 @@ class SessionViewModel(application: Application) : AndroidViewModel(application)
                         else -> System.currentTimeMillis()
                     }
                     val lines = if (justConnected) t.lines + "— Connected —" else t.lines
-                    t.copy(connState = event.state, connectedSinceMillis = since, lines = lines)
+                    t.copy(
+                        connState = event.state,
+                        connectedSinceMillis = since,
+                        lines = lines,
+                        wasConnected = t.wasConnected || event.state == ConnState.CONNECTED,
+                    )
                 }
             }
             is PortEvent.ConnectionClosed -> {
                 val tabId = boundConnections.remove(portId to event.id) ?: return
                 updateTab(tabId) { tab ->
-                    val line = if (tab.connState == ConnState.CONNECTED) "— Disconnected —" else "— Connection timed out —"
+                    val line = when {
+                        tab.initiatedClose -> "— Disconnected —"
+                        // connState is still CONNECTED when the transport dies without a DISC exchange.
+                        tab.connState == ConnState.CONNECTED -> "— Connection timed out —"
+                        // connState was set to DISCONNECTED by a prior ConnStateChanged event (clean DISC).
+                        tab.wasConnected -> "— Disconnected —"
+                        else -> "— Connection failed —"
+                    }
                     tab.copy(
                         connectionId = null,
                         connState = ConnState.DISCONNECTED,
                         connectedSinceMillis = null,
+                        initiatedClose = false,
+                        wasConnected = false,
                         lines = tab.lines + line,
                     )
                 }
@@ -410,9 +448,14 @@ class SessionViewModel(application: Application) : AndroidViewModel(application)
             is PortEvent.Data -> {
                 val tabId = boundConnections[portId to event.id] ?: return
                 val text = String(event.bytes)
+                // BBS and node software uses \r\n line endings. Split so each physical line in the
+                // remote's output becomes a separate entry in tab.lines, rendered by the horizontal-
+                // scroll Text composable (softWrap = false) as its own visual line.
+                val newLines = text.split(Regex("\r\n|\r|\n"))
+                    .let { if (it.lastOrNull() == "") it.dropLast(1) else it }
                 updateTab(tabId) {
                     it.copy(
-                        lines = it.lines + text,
+                        lines = it.lines + newLines,
                         packetsReceived = it.packetsReceived + 1,
                         bytesReceived = it.bytesReceived + event.bytes.size,
                     )
@@ -427,7 +470,7 @@ class SessionViewModel(application: Application) : AndroidViewModel(application)
 
     private fun openTabConnection(portId: String, tab: SessionTabState) {
         val svc = service ?: return
-        updateTab(tab.id) { it.copy(lines = it.lines + "— Connecting to ${tab.node}… —") }
+        updateTab(tab.id) { it.copy(lines = it.lines + "— Connecting to ${tab.node}… —", wasConnected = false) }
         viewModelScope.launch {
             svc.portManager.sendCommand(portId, PortCommand.OpenConnection(tab.node.trim().uppercase(), parseVia(tab.via)))
         }
@@ -476,5 +519,5 @@ class SessionViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun parseVia(via: String): List<String> =
-        via.split(",", " ").map { it.trim() }.filter { it.isNotEmpty() }
+        via.split(",", " ").map { it.trim().uppercase() }.filter { it.isNotEmpty() }
 }

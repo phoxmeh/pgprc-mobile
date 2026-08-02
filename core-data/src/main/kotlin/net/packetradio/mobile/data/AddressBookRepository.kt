@@ -54,6 +54,13 @@ class AddressBookRepository(private val db: PacketRadioDatabase) {
         db.heardBeaconDao().pruneOldest(call, keep = 5)
     }
 
+    suspend fun delete(callsign: String) {
+        val call = callsign.uppercase()
+        val entity = db.addressBookDao().getByCallsign(call) ?: return
+        db.addressBookDao().delete(entity)
+        db.heardBeaconDao().deleteForCallsign(call)
+    }
+
     private suspend fun touch(callsign: String, direct: Boolean, autoAlias: String? = null, viaPath: String = "") {
         val call = callsign.uppercase()
         val existing = db.addressBookDao().getByCallsign(call)?.toDomain()

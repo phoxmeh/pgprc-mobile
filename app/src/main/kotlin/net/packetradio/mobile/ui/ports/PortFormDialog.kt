@@ -42,7 +42,7 @@ private fun PortConfig?.kissParamsOrDefault(): KissParams = when (this) {
     else -> KissParams()
 }
 
-private enum class FormKind { AGWPE, KISS_TCP, BLUETOOTH_KISS }
+private enum class FormKind { AGWPE, KISS_TCP, BLUETOOTH_KISS, TELNET }
 
 /**
  * Add/edit form for the three port kinds that already have a transport
@@ -66,6 +66,7 @@ fun PortFormDialog(
             when (initialConfig) {
                 is PortConfig.KissTcp -> FormKind.KISS_TCP
                 is PortConfig.BluetoothKiss -> FormKind.BLUETOOTH_KISS
+                is PortConfig.Telnet -> FormKind.TELNET
                 else -> FormKind.AGWPE
             },
         )
@@ -76,6 +77,7 @@ fun PortFormDialog(
             when (initialConfig) {
                 is PortConfig.Agwpe -> initialConfig.host
                 is PortConfig.KissTcp -> initialConfig.host
+                is PortConfig.Telnet -> initialConfig.host
                 else -> "127.0.0.1"
             },
         )
@@ -85,6 +87,7 @@ fun PortFormDialog(
             when (initialConfig) {
                 is PortConfig.Agwpe -> initialConfig.port.toString()
                 is PortConfig.KissTcp -> initialConfig.port.toString()
+                is PortConfig.Telnet -> initialConfig.port.toString()
                 else -> "8000"
             },
         )
@@ -149,6 +152,7 @@ fun PortFormDialog(
                                 FormKind.AGWPE -> "8000"
                                 FormKind.KISS_TCP -> "8001"
                                 FormKind.BLUETOOTH_KISS -> port
+                                FormKind.TELNET -> "23"
                             }
                         },
                     )
@@ -167,35 +171,41 @@ fun PortFormDialog(
                 if (kind == FormKind.AGWPE) {
                     OutlinedTextField(radioPort, { radioPort = it }, label = { Text("Radio port") }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
                 }
-                OutlinedTextField(myCall, { myCall = it.uppercase() }, label = { Text("My callsign") }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+                if (kind != FormKind.TELNET) {
+                    OutlinedTextField(myCall, { myCall = it.uppercase() }, label = { Text("My callsign") }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+                }
                 Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = autoconnect, onCheckedChange = { autoconnect = it })
                     Text("Autoconnect on service start")
                 }
 
-                if (kind == FormKind.AGWPE) {
-                    Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = useLogin, onCheckedChange = { useLogin = it })
-                        Text("Requires login")
-                    }
-                    if (useLogin) {
-                        OutlinedTextField(username, { username = it }, label = { Text("Username") }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
-                        OutlinedTextField(password, { password = it }, label = { Text("Password") }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
-                    }
-                } else {
-                    Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = useKissParams, onCheckedChange = { useKissParams = it })
-                        Text("Custom TNC parameters")
-                    }
-                    if (useKissParams) {
-                        OutlinedTextField(txDelay, { txDelay = it }, label = { Text("TX delay (x10ms)") }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
-                        OutlinedTextField(persistence, { persistence = it }, label = { Text("Persistence (0-255)") }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
-                        OutlinedTextField(slotTime, { slotTime = it }, label = { Text("Slot time (x10ms)") }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
+                when (kind) {
+                    FormKind.AGWPE -> {
                         Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(checked = fullDuplex, onCheckedChange = { fullDuplex = it })
-                            Text("Full duplex")
+                            Checkbox(checked = useLogin, onCheckedChange = { useLogin = it })
+                            Text("Requires login")
+                        }
+                        if (useLogin) {
+                            OutlinedTextField(username, { username = it }, label = { Text("Username") }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
+                            OutlinedTextField(password, { password = it }, label = { Text("Password") }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
                         }
                     }
+                    FormKind.KISS_TCP, FormKind.BLUETOOTH_KISS -> {
+                        Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = useKissParams, onCheckedChange = { useKissParams = it })
+                            Text("Custom TNC parameters")
+                        }
+                        if (useKissParams) {
+                            OutlinedTextField(txDelay, { txDelay = it }, label = { Text("TX delay (x10ms)") }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
+                            OutlinedTextField(persistence, { persistence = it }, label = { Text("Persistence (0-255)") }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
+                            OutlinedTextField(slotTime, { slotTime = it }, label = { Text("Slot time (x10ms)") }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
+                            Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Checkbox(checked = fullDuplex, onCheckedChange = { fullDuplex = it })
+                                Text("Full duplex")
+                            }
+                        }
+                    }
+                    FormKind.TELNET -> {} // no TNC parameters or login for a plain TCP Telnet session
                 }
             }
         },
@@ -235,6 +245,10 @@ fun PortFormDialog(
                             kissParams = kissParams,
                         )
                     }
+                    FormKind.TELNET -> {
+                        val portNum = port.toIntOrNull() ?: return@TextButton
+                        PortConfig.Telnet(host = host, port = portNum)
+                    }
                 }
                 onSave(name, config, autoconnect)
                 onDismiss()
@@ -248,6 +262,7 @@ private fun FormKind.label(): String = when (this) {
     FormKind.AGWPE -> "AGWPE"
     FormKind.KISS_TCP -> "KISS (TCP)"
     FormKind.BLUETOOTH_KISS -> "Bluetooth KISS"
+    FormKind.TELNET -> "Telnet"
 }
 
 @Composable

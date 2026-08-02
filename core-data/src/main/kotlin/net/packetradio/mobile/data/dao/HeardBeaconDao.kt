@@ -23,4 +23,7 @@ interface HeardBeaconDao {
             "(SELECT id FROM heard_beacons WHERE callsign = :callsign ORDER BY id DESC LIMIT :keep)",
     )
     suspend fun pruneOldest(callsign: String, keep: Int)
+
+    @Query("DELETE FROM heard_beacons WHERE callsign = :callsign")
+    suspend fun deleteForCallsign(callsign: String)
 }

@@ -12,7 +12,7 @@ object PortRunnerFactory {
         is PortConfig.UsbSerialKiss -> throw UnsupportedOperationException(
             "USB-serial KISS transport not implemented yet",
         )
-        is PortConfig.Telnet -> throw UnsupportedOperationException("Telnet transport not implemented yet")
+        is PortConfig.Telnet -> TelnetRunner(config)
         is PortConfig.Ssh -> throw UnsupportedOperationException("SSH transport not implemented yet")
     }
 }

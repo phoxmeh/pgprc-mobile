@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material3.DropdownMenu
@@ -25,6 +26,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import net.packetradio.mobile.model.PortEntry
 import net.packetradio.mobile.model.supportsUnproto
@@ -53,17 +55,19 @@ fun AdHocUnprotoBar(
         Spacer(Modifier.width(4.dp))
         OutlinedTextField(
             value = state.node,
-            onValueChange = { onNodeChanged(it.uppercase()) },
+            onValueChange = { onNodeChanged(it.replace(' ', '-')) },
             label = { Text("Node") },
             singleLine = true,
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None),
             modifier = Modifier.weight(1f),
         )
         Spacer(Modifier.width(4.dp))
         OutlinedTextField(
             value = state.via,
-            onValueChange = { onViaChanged(it.uppercase()) },
+            onValueChange = { onViaChanged(it.replace(' ', '-')) },
             label = { Text("Via") },
             singleLine = true,
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None),
             modifier = Modifier.weight(1f),
         )
     }
@@ -72,6 +76,7 @@ fun AdHocUnprotoBar(
             value = state.inputText,
             onValueChange = onInputChanged,
             label = { Text("Unproto message") },
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None),
             modifier = Modifier.weight(1f),
         )
         IconButton(onClick = onSend, enabled = state.portId != null && state.node.isNotBlank()) {
