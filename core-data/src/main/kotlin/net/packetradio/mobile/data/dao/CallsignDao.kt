@@ -20,4 +20,19 @@ interface CallsignDao {
 
     @Delete
     suspend fun delete(entry: CallsignEntity)
+
+    @Query(
+        "UPDATE callsigns SET firstName = :firstName, lastName = :lastName, " +
+            "address = :address, email = :email, lat = :lat, lon = :lon " +
+            "WHERE baseCallsign = :baseCallsign",
+    )
+    suspend fun updateQrzData(
+        baseCallsign: String,
+        firstName: String?,
+        lastName: String?,
+        address: String?,
+        email: String?,
+        lat: Double?,
+        lon: Double?,
+    )
 }

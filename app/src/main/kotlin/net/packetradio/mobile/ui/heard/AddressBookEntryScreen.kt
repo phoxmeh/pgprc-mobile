@@ -2,6 +2,8 @@
 
 package net.packetradio.mobile.ui.heard
 
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,6 +16,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -106,6 +109,22 @@ fun AddressBookEntryScreen(
             ReadOnlyField("Name", entry.name)
             ReadOnlyField("Location", entry.location)
 
+            // --- QRZ operator data ---
+            val hasQrzInfo = listOf(entry.firstName, entry.lastName, entry.address, entry.email).any { !it.isNullOrBlank() }
+            if (hasQrzInfo) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "From QRZ",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+                ReadOnlyField("First name", entry.firstName)
+                ReadOnlyField("Last name", entry.lastName)
+                ReadOnlyField("Address", entry.address)
+                ReadOnlyField("Email", entry.email)
+            }
+
             // --- SSID list ---
             Spacer(Modifier.height(16.dp))
             HorizontalDivider()
@@ -164,6 +183,32 @@ fun AddressBookEntryScreen(
                 notes = entry.notes ?: "",
                 onSave = { viewModel.updateCallsign(baseCallsign, entry.name, entry.location, it) },
             )
+
+            // --- Map preview ---
+            val mapLat = entry.lat
+            val mapLon = entry.lon
+            if (mapLat != null && mapLon != null) {
+                Spacer(Modifier.height(16.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(12.dp))
+                Text("Location", style = MaterialTheme.typography.titleMedium)
+                val html = remember(mapLat, mapLon) { mapHtml(mapLat, mapLon) }
+                AndroidView(
+                    factory = { ctx ->
+                        WebView(ctx).apply {
+                            settings.javaScriptEnabled = true
+                            settings.domStorageEnabled = true
+                            webViewClient = WebViewClient()
+                            isNestedScrollingEnabled = false
+                            loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(220.dp)
+                        .padding(top = 8.dp),
+                )
+            }
         }
     }
 
@@ -471,3 +516,20 @@ private fun ReadOnlyField(label: String, value: String?) {
         Text(value, style = MaterialTheme.typography.bodyMedium)
     }
 }
+
+private fun mapHtml(lat: Double, lon: Double) = """
+<!DOCTYPE html><html><head>
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>html,body,#map{width:100%;height:100%;margin:0;padding:0;overflow:hidden}</style>
+</head><body>
+<div id="map"></div>
+<script>
+  var map = L.map('map', {zoomControl:true, attributionControl:false, scrollWheelZoom:false})
+    .setView([$lat, $lon], 12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19}).addTo(map);
+  L.marker([$lat, $lon]).addTo(map);
+</script>
+</body></html>
+""".trimIndent()

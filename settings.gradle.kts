@@ -21,5 +21,6 @@ rootProject.name = "packet-radio-android"
 include(":app")
 include(":core-model")
 include(":core-protocol")
+include(":core-modem")
 include(":core-transport")
 include(":core-data")

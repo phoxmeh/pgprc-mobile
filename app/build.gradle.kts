@@ -46,6 +46,7 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.navigation.compose)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.usb.serial.android)
 
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.animation)

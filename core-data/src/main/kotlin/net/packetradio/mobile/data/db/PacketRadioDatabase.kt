@@ -44,7 +44,7 @@ import net.packetradio.mobile.data.entity.WatchedDestinationEntity
         WatchedDestinationEntity::class,
         NetRomNodeEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = false,
 )
 abstract class PacketRadioDatabase : RoomDatabase() {

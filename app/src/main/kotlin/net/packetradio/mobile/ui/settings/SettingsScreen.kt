@@ -20,8 +20,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
@@ -36,6 +39,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -77,6 +82,12 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = viewModel(
     val ports by viewModel.ports.collectAsState()
     var netRomTableExpanded by remember { mutableStateOf<String?>(null) }
     var confirmClearPortId by remember { mutableStateOf<String?>(null) }
+
+    var qrzUsername by remember { mutableStateOf("") }
+    var qrzPassword by remember { mutableStateOf("") }
+    var qrzPasswordVisible by remember { mutableStateOf(false) }
+    var qrzSyncing by remember { mutableStateOf(false) }
+    var qrzSyncStatus by remember { mutableStateOf<String?>(null) }
 
     val context = LocalContext.current
     val ioScope = rememberCoroutineScope()
@@ -128,6 +139,9 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = viewModel(
         val (minQ, initObs) = viewModel.loadNetRomPrefs()
         netRomMinQuality = minQ.toString()
         netRomInitialObsolescence = initObs.toString()
+
+        qrzUsername = current.qrzUsername ?: ""
+        qrzPassword = current.qrzPassword ?: ""
     }
 
     Scaffold(
@@ -249,6 +263,74 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = viewModel(
                     status,
                     style = MaterialTheme.typography.bodySmall,
                     color = if (status.startsWith("Import failed") || status.startsWith("Export failed"))
+                        MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+
+            HorizontalDivider(Modifier.padding(vertical = 24.dp))
+
+            Text("QRZ Lookup", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Syncs operator name, address, email, and map location from QRZ.com. " +
+                    "Requires a QRZ XML Data subscription.",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            OutlinedTextField(
+                value = qrzUsername,
+                onValueChange = { qrzUsername = it },
+                label = { Text("QRZ username") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            )
+            OutlinedTextField(
+                value = qrzPassword,
+                onValueChange = { qrzPassword = it },
+                label = { Text("QRZ password") },
+                singleLine = true,
+                visualTransformation = if (qrzPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = {
+                    IconButton(onClick = { qrzPasswordVisible = !qrzPasswordVisible }) {
+                        Icon(
+                            if (qrzPasswordVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                            contentDescription = if (qrzPasswordVisible) "Hide password" else "Show password",
+                        )
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Button(onClick = { viewModel.saveQrzCredentials(qrzUsername, qrzPassword) }) {
+                    Text("Save credentials")
+                }
+                Button(
+                    onClick = {
+                        qrzSyncing = true
+                        qrzSyncStatus = null
+                        viewModel.syncFromQrz { status ->
+                            qrzSyncing = false
+                            qrzSyncStatus = status
+                        }
+                    },
+                    enabled = !qrzSyncing,
+                ) {
+                    Text("Sync from QRZ")
+                }
+                if (qrzSyncing) {
+                    CircularProgressIndicator(modifier = Modifier.padding(start = 4.dp), strokeWidth = 2.dp)
+                }
+            }
+            qrzSyncStatus?.let { status ->
+                Text(
+                    status,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (status.startsWith("QRZ login") || status.startsWith("Sync failed") || status.startsWith("Enter"))
                         MaterialTheme.colorScheme.error
                     else MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(top = 4.dp),

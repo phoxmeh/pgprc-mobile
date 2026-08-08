@@ -11,6 +11,7 @@ import net.packetradio.mobile.data.entity.SsidEntity
 import net.packetradio.mobile.data.entity.toDomain
 import net.packetradio.mobile.model.CallsignEntry
 import net.packetradio.mobile.model.HeardBeaconPacket
+import net.packetradio.mobile.model.QrzResult
 import net.packetradio.mobile.model.SsidEntry
 
 /**
@@ -54,6 +55,10 @@ class AddressBookRepository(private val db: PacketRadioDatabase) {
             val base = entry.baseCallsign.uppercase()
             ensureCallsign(base)
             updateCallsign(base, entry.name, entry.location, entry.notes)
+            val hasQrzData = listOf(entry.firstName, entry.lastName, entry.address, entry.email).any { !it.isNullOrBlank() }
+            if (hasQrzData) {
+                updateQrzData(base, QrzResult(entry.firstName, entry.lastName, entry.address, entry.email, entry.lat, entry.lon))
+            }
             for (ssid in entry.ssids) {
                 addSsid(base, ssid.ssidNumber, ssid.userAlias, ssid.tag, ssid.viaPaths)
             }
@@ -108,6 +113,21 @@ class AddressBookRepository(private val db: PacketRadioDatabase) {
                 location = location?.trim()?.ifBlank { null },
                 notes = notes?.trim()?.ifBlank { null },
             ),
+        )
+    }
+
+    /** Writes QRZ-sourced fields for a callsign; safe to call if the row doesn't exist yet. */
+    suspend fun updateQrzData(baseCallsign: String, result: QrzResult) {
+        val base = baseCallsign.uppercase()
+        ensureCallsign(base)
+        db.callsignDao().updateQrzData(
+            baseCallsign = base,
+            firstName = result.firstName,
+            lastName = result.lastName,
+            address = result.address,
+            email = result.email,
+            lat = result.lat,
+            lon = result.lon,
         )
     }
 

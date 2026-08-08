@@ -21,6 +21,10 @@ fun exportTomlString(entries: List<CallsignEntry>): String {
         sb.append("name = ${tomlStr(entry.name ?: "")}\n")
         sb.append("location = ${tomlStr(entry.location ?: "")}\n")
         sb.append("notes = ${tomlStr(entry.notes ?: "")}\n")
+        sb.append("firstName = ${tomlStr(entry.firstName ?: "")}\n")
+        sb.append("lastName = ${tomlStr(entry.lastName ?: "")}\n")
+        sb.append("address = ${tomlStr(entry.address ?: "")}\n")
+        sb.append("email = ${tomlStr(entry.email ?: "")}\n")
         sb.append("\n")
         for (ssid in entry.ssids.sortedBy { it.ssidNumber }) {
             sb.append("[[ssid]]\n")
@@ -96,6 +100,10 @@ fun parseTomlEntries(toml: String): List<CallsignEntry> {
             name = fields["name"]?.ifBlank { null },
             location = fields["location"]?.ifBlank { null },
             notes = fields["notes"]?.ifBlank { null },
+            firstName = fields["firstName"]?.ifBlank { null },
+            lastName = fields["lastName"]?.ifBlank { null },
+            address = fields["address"]?.ifBlank { null },
+            email = fields["email"]?.ifBlank { null },
             ssids = mySsids,
         )
     }

@@ -11,8 +11,10 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
 
-    <!-- USB-serial KISS TNC over OTG. -->
+    <!-- USB-serial KISS TNC over OTG and USB Audio/PTT (Digirig, QDX, QMX). -->
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+    <!-- AudioRecord requires RECORD_AUDIO even when routing to a USB audio device. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <!-- Desktop-notification-equivalent (directed-frame / incoming-connection alerts). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />

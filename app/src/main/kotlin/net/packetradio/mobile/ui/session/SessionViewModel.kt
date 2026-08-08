@@ -398,7 +398,7 @@ class SessionViewModel(application: Application) : AndroidViewModel(application)
         val state = _adHoc.value
         val portId = state.portId ?: return
         val svc = service ?: return
-        if (state.node.isBlank() || state.inputText.isBlank()) return
+        if (state.node.isBlank()) return
         val via = parseVia(state.via)
         val bytes = state.inputText.toByteArray()
         viewModelScope.launch {

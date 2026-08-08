@@ -36,7 +36,7 @@ class PacketRadioService : Service() {
     private val supervisorJob = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.Default + supervisorJob)
 
-    val portManager: PortManager by lazy { PortManager(scope) }
+    val portManager: PortManager by lazy { PortManager(scope, this) }
     val beaconScheduler: BeaconScheduler by lazy { BeaconScheduler(scope, portManager) }
     private val stationTracker: StationTracker by lazy {
         val app = application as PacketRadioApp

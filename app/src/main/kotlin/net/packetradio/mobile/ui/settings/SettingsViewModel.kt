@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import net.packetradio.mobile.PacketRadioApp
+import net.packetradio.mobile.data.QrzClient
 import net.packetradio.mobile.data.exportTomlString
 import net.packetradio.mobile.data.parseTomlEntries
 import net.packetradio.mobile.model.NetRomNodeEntry
@@ -56,6 +57,53 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun clearNetRomForPort(portId: String) {
         viewModelScope.launch { app.netRom.clearForPort(portId) }
+    }
+
+    // --- QRZ ---
+
+    fun saveQrzCredentials(username: String, password: String) {
+        viewModelScope.launch {
+            app.preferences.updateUiPrefs {
+                it.copy(
+                    qrzUsername = username.trim().ifBlank { null },
+                    qrzPassword = password.trim().ifBlank { null },
+                )
+            }
+        }
+    }
+
+    /**
+     * Syncs QRZ operator data for every callsign in the address book.
+     * [onStatus] is always called on the main thread.
+     */
+    fun syncFromQrz(onStatus: (String) -> Unit) {
+        viewModelScope.launch {
+            val prefs = app.preferences.uiPrefs.first()
+            val username = prefs.qrzUsername.orEmpty()
+            val password = prefs.qrzPassword.orEmpty()
+            if (username.isBlank() || password.isBlank()) {
+                onStatus("Enter and save QRZ credentials first.")
+                return@launch
+            }
+            onStatus("Logging in to QRZ…")
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val client = QrzClient()
+                    val sessionKey = client.login(username, password)
+                        ?: return@runCatching "QRZ login failed — check credentials."
+                    val callsigns = app.addressBook.exportAll().map { it.baseCallsign }
+                    if (callsigns.isEmpty()) return@runCatching "No callsigns in address book to sync."
+                    var synced = 0
+                    for (base in callsigns) {
+                        val qrzData = client.lookup(sessionKey, base) ?: continue
+                        app.addressBook.updateQrzData(base, qrzData)
+                        synced++
+                    }
+                    "Synced $synced of ${callsigns.size} callsign(s) from QRZ."
+                }.getOrElse { "Sync failed: ${it.message}" }
+            }
+            onStatus(result)
+        }
     }
 
     // --- Address book import / export ---

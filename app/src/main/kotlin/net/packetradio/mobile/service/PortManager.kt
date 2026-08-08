@@ -1,5 +1,6 @@
 package net.packetradio.mobile.service
 
+import android.content.Context
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
@@ -25,7 +26,7 @@ data class PortEventEnvelope(val portId: String, val event: PortEvent)
  * desktop's `Ui`/`AppState` dispatching `PortEvent`s from N running port
  * threads into one `handle_event`.
  */
-class PortManager(private val scope: CoroutineScope) {
+class PortManager(private val scope: CoroutineScope, private val context: Context) {
 
     /**
      * [connected] only flips true once [PortEvent.PortConnected] actually
@@ -53,7 +54,7 @@ class PortManager(private val scope: CoroutineScope) {
         if (entries.containsKey(portId)) return
         val commands = Channel<PortCommand>(Channel.UNLIMITED)
         val portEvents = Channel<PortEvent>(Channel.UNLIMITED)
-        val runner = PortRunnerFactory.create(config)
+        val runner = PortRunnerFactory.create(config, context)
         val entry = Entry(commands)
 
         entries[portId] = entry

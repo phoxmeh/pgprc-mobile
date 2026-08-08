@@ -42,6 +42,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -185,7 +187,20 @@ private fun CallsignRow(entry: CallsignEntry, onClick: () -> Unit) {
         modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
     ) {
         Column(Modifier.padding(12.dp)) {
-            Text(entry.baseCallsign, style = MaterialTheme.typography.bodyLarge)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(entry.baseCallsign, style = MaterialTheme.typography.bodyLarge)
+                entry.operatorName?.let { name ->
+                    Text(
+                        name,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             if (entry.ssids.isNotEmpty()) {
                 val ssidText = entry.ssids.joinToString(", ") { ssid ->
                     val suffix = if (ssid.ssidNumber == 0) "-0" else "-${ssid.ssidNumber}"

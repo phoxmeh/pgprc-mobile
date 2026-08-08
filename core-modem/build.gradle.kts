@@ -1,10 +1,9 @@
 plugins {
-    // AGP 9+ has built-in Kotlin support for Android modules.
     alias(libs.plugins.android.library)
 }
 
 android {
-    namespace = "net.packetradio.mobile.transport"
+    namespace = "net.packetradio.mobile.modem"
     compileSdk = 36
 
     defaultConfig {
@@ -19,13 +18,8 @@ android {
 
 dependencies {
     implementation(project(":core-model"))
-    implementation(project(":core-protocol"))
-    implementation(project(":core-modem"))
-    implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.android)
-    implementation(libs.usb.serial.android)
-    implementation(libs.sshj)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
 }

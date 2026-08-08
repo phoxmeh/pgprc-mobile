@@ -66,6 +66,29 @@ sealed interface PortConfig {
         val myCall: String,
         val kissParams: KissParams = KissParams(),
     ) : PortConfig
+
+    /**
+     * USB sound card + serial PTT interface (Digirig, QRP Labs QDX/QMX, and similar).
+     * PTT is controlled by asserting RTS on the USB serial port ([serialVendorId] /
+     * [serialProductId]); audio is routed to/from the USB audio device matched by
+     * [audioProductName] (from [android.media.AudioDeviceInfo.productName]).
+     *
+     * The AFSK modem lives in [net.packetradio.mobile.transport.UsbAudioRunner]
+     * and converts between raw [android.media.AudioRecord] / [android.media.AudioTrack]
+     * streams and AX.25 frames.
+     */
+    @Serializable
+    data class UsbAudio(
+        val serialVendorId: Int,
+        val serialProductId: Int,
+        /** Display name of the USB serial device; stored for UI only, not used to open the port. */
+        val serialDeviceName: String = "",
+        /** Product name of the USB audio device to use, or blank to auto-select the first one found. */
+        val audioProductName: String = "",
+        val myCall: String,
+        val modemMode: ModemMode = ModemMode.BELL_202_1200,
+        val afskSettings: AfskSettings = AfskSettings(),
+    ) : PortConfig
 }
 
 @Serializable
@@ -104,6 +127,7 @@ fun PortConfig.kindLabel(): String = when (this) {
     is PortConfig.KissTcp -> "KISS (TCP)"
     is PortConfig.BluetoothKiss -> "KISS (Bluetooth)"
     is PortConfig.UsbSerialKiss -> "KISS (USB)"
+    is PortConfig.UsbAudio -> "USB Audio/PTT"
 }
 
 /**
@@ -114,7 +138,7 @@ fun PortConfig.kindLabel(): String = when (this) {
  * yet — its `PortRunner` doesn't exist at all — so it stays excluded until that lands.
  */
 fun PortConfig.supportsConnect(): Boolean = when (this) {
-    is PortConfig.Agwpe, is PortConfig.KissTcp, is PortConfig.BluetoothKiss -> true
+    is PortConfig.Agwpe, is PortConfig.KissTcp, is PortConfig.BluetoothKiss, is PortConfig.UsbAudio -> true
     is PortConfig.Telnet, is PortConfig.Ssh, is PortConfig.UsbSerialKiss -> false
 }
 
@@ -124,8 +148,15 @@ fun PortConfig.isTerminalMode(): Boolean = this is PortConfig.Telnet
 /** Whether this port kind can send one-shot unconnected (UI) frames. */
 fun PortConfig.supportsUnproto(): Boolean = when (this) {
     is PortConfig.Agwpe, is PortConfig.KissTcp, is PortConfig.BluetoothKiss, is PortConfig.UsbSerialKiss -> true
+    is PortConfig.UsbAudio -> true
     is PortConfig.Telnet, is PortConfig.Ssh -> false
 }
 
 /** Whether this port kind has a "node/destination callsign" concept at all. */
 fun PortConfig.needsNode(): Boolean = supportsConnect() || supportsUnproto()
+
+/** Whether the port's callsign is relevant to display/configure. */
+fun PortConfig.hasCallsign(): Boolean = when (this) {
+    is PortConfig.Telnet, is PortConfig.Ssh -> false
+    else -> true
+}
