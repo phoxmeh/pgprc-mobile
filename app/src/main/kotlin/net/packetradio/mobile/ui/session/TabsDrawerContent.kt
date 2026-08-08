@@ -147,7 +147,23 @@ private fun TabDrawerRow(
             if (tab.pinned) {
                 Icon(Icons.Filled.PushPin, contentDescription = "Pinned", modifier = Modifier.padding(end = 8.dp))
             }
-            Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+            val viaTagLine = buildString {
+                if (tab.via.isNotBlank()) append(tab.via)
+                if (tab.tag != null) {
+                    if (isNotEmpty()) append("  ")
+                    append("#${tab.tag}")
+                }
+            }
+            Column(Modifier.weight(1f)) {
+                Text(label, style = MaterialTheme.typography.bodyLarge)
+                if (viaTagLine.isNotEmpty()) {
+                    Text(
+                        viaTagLine,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             if (pendingClose) {
                 IconButton(onClick = { pendingClose = false; onClose() }) {
                     Icon(Icons.Filled.Check, contentDescription = "Confirm close")

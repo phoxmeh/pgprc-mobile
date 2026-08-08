@@ -23,6 +23,8 @@ data class AddressBookEntry(
     val via: String = "",
     /** False if this station has only ever been seen mentioned in someone else's NODES broadcast. */
     val heardDirectly: Boolean = true,
+    /** Most recent ID/BEACON packet text — mirrored from the heard_beacons table for fast list display. */
+    val currentId: String? = null,
 ) {
     /** What to display/dial with — the user's own alias if they set one, else the learned one. */
     val displayAlias: String? get() = userAlias ?: autoAlias

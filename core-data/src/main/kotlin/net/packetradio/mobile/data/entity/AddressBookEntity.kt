@@ -16,6 +16,7 @@ data class AddressBookEntity(
     val heardCount: Int,
     val via: String,
     val heardDirectly: Boolean,
+    val currentId: String?,
 )
 
 fun AddressBookEntry.toEntity(): AddressBookEntity = AddressBookEntity(
@@ -29,6 +30,7 @@ fun AddressBookEntry.toEntity(): AddressBookEntity = AddressBookEntity(
     heardCount = heardCount,
     via = via,
     heardDirectly = heardDirectly,
+    currentId = currentId,
 )
 
 fun AddressBookEntity.toDomain(): AddressBookEntry = AddressBookEntry(
@@ -42,4 +44,5 @@ fun AddressBookEntity.toDomain(): AddressBookEntry = AddressBookEntry(
     heardCount = heardCount,
     via = via,
     heardDirectly = heardDirectly,
+    currentId = currentId,
 )

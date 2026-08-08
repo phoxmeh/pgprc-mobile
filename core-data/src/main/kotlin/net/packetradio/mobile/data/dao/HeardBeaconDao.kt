@@ -11,6 +11,9 @@ interface HeardBeaconDao {
     @Query("SELECT * FROM heard_beacons WHERE callsign = :callsign ORDER BY id DESC")
     fun observeForCallsign(callsign: String): Flow<List<HeardBeaconEntity>>
 
+    @Query("SELECT * FROM heard_beacons WHERE callsign = :base OR callsign LIKE :base || '-%' ORDER BY id DESC")
+    fun observeForBase(base: String): Flow<List<HeardBeaconEntity>>
+
     @Query("SELECT * FROM heard_beacons WHERE callsign = :callsign ORDER BY id DESC LIMIT 1")
     suspend fun mostRecent(callsign: String): HeardBeaconEntity?
 

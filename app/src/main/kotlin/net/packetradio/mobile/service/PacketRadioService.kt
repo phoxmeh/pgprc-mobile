@@ -40,7 +40,7 @@ class PacketRadioService : Service() {
     val beaconScheduler: BeaconScheduler by lazy { BeaconScheduler(scope, portManager) }
     private val stationTracker: StationTracker by lazy {
         val app = application as PacketRadioApp
-        StationTracker(this, scope, portManager, app.addressBook, app.notifications)
+        StationTracker(this, scope, portManager, app.addressBook, app.netRom, app.notifications)
     }
 
     private val binder = LocalBinder()

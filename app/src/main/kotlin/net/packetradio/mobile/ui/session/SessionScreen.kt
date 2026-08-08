@@ -27,6 +27,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.FilterAlt
 import androidx.compose.material.icons.filled.FormatSize
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Remove
@@ -96,10 +98,12 @@ fun SessionScreen(
 
     var leftDrawerOpen by remember { mutableStateOf(false) }
     var rightDrawerOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { viewModel.terminalTabOpened.collect { rightDrawerOpen = false } }
     var showDialDialog by remember { mutableStateOf(false) }
     var filterVisible by remember { mutableStateOf(false) }
     var fontSizeSp by remember { mutableFloatStateOf(FONT_SIZE_DEFAULT) }
     var showFontSizeMenu by remember { mutableStateOf(false) }
+    var miniMonitorVisible by remember { mutableStateOf(true) }
 
     // This is the nav graph's root with nothing to pop back to, so system Back would otherwise
     // fall through to Android's default: finish the Activity. Finishing the task's only Activity
@@ -115,7 +119,13 @@ fun SessionScreen(
         }
     }
 
-    val frontId = selectedTabId ?: MONITOR_TAB_ID
+    // Guard against selectedTabId briefly pointing to a tab that no longer exists in tabs
+    // (possible if two StateFlow updates are observed in separate composition frames). Fall back
+    // to Monitor so the when-block always has a matching branch and never renders a blank screen.
+    val frontId = run {
+        val id = selectedTabId ?: return@run MONITOR_TAB_ID
+        if (id == LOG_TAB_ID || tabs.any { it.id == id }) id else MONITOR_TAB_ID
+    }
     val frontTab = tabs.find { it.id == frontId }
     val title = when (frontId) {
         MONITOR_TAB_ID -> "Monitor"
@@ -141,6 +151,14 @@ fun SessionScreen(
                                     Icons.Filled.FilterAlt,
                                     contentDescription = "Toggle filter",
                                     tint = if (filterVisible) MaterialTheme.colorScheme.primary else LocalContentColor.current,
+                                )
+                            }
+                        }
+                        if (frontTab != null) {
+                            IconButton(onClick = { miniMonitorVisible = !miniMonitorVisible }) {
+                                Icon(
+                                    if (miniMonitorVisible) Icons.Filled.Fullscreen else Icons.Filled.FullscreenExit,
+                                    contentDescription = if (miniMonitorVisible) "Hide monitor panel" else "Show monitor panel",
                                 )
                             }
                         }
@@ -224,6 +242,7 @@ fun SessionScreen(
                         myCall = myCall,
                         highlightPrefs = highlightPrefs,
                         fontSizeSp = fontSizeSp,
+                        miniMonitorVisible = miniMonitorVisible,
                         onToggleNodeConnection = { viewModel.toggleNodeConnection(frontTab.id) },
                         onInputChanged = { viewModel.setTabInput(frontTab.id, it) },
                         onSend = { viewModel.sendTabInput(frontTab.id) },
@@ -260,12 +279,14 @@ fun SessionScreen(
 
         if (showDialDialog) {
             val heardStations by viewModel.heardStations.collectAsState()
+            val netRomNodes by viewModel.netRomNodes.collectAsState()
             DialDialog(
                 ports = ports,
                 heardStations = heardStations,
+                netRomNodes = netRomNodes,
                 onDismiss = { showDialDialog = false },
-                onDial = { portId, node, via, connectImmediately ->
-                    viewModel.dialTab(portId, node, via, connectImmediately)
+                onDial = { portId, node, via, tag, netRomGateway, connectImmediately ->
+                    viewModel.dialTab(portId, node, via, tag, netRomGateway, connectImmediately)
                     showDialDialog = false
                 },
             )
@@ -321,7 +342,8 @@ private fun Scrim(onClick: () -> Unit) {
  */
 @Composable
 private fun StatusBar(tab: SessionTabState?) {
-    val connected = tab != null && tab.connectionId != null && tab.connState == ConnState.CONNECTED
+    val connected = tab != null && tab.connState == ConnState.CONNECTED &&
+        (tab.connectionId != null || tab.netRomCircuit != null)
     val label = when {
         tab == null -> "No tab selected"
         connected -> "Connected" + connectedDuration(tab.connectedSinceMillis)?.let { " $it" }.orEmpty()

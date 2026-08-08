@@ -3,13 +3,16 @@ package net.packetradio.mobile.ui.session
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -18,6 +21,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
@@ -60,6 +64,8 @@ fun MonitorContent(
     val errorColor = MaterialTheme.colorScheme.error
     val rules = defaultHighlightRules()
     val monoStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace, fontSize = fontSizeSp.sp)
+    val density = LocalDensity.current
+    val imeHeight = WindowInsets.ime.getBottom(density)
 
     Column(modifier.fillMaxSize().padding(horizontal = 12.dp).padding(top = 4.dp, bottom = 12.dp)) {
         if (showFilter) {
@@ -81,22 +87,24 @@ fun MonitorContent(
             }
         }
         val listState = rememberLazyListState()
-        LaunchedEffect(displayed.size) {
+        LaunchedEffect(displayed.size, imeHeight) {
             if (displayed.isNotEmpty()) listState.scrollToItem(displayed.size - 1)
         }
-        LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            items(displayed) { line ->
-                val annotated = highlightMonitorLine(line.text, myCall, highlightPrefs, rules, mutedColor, errorColor)
-                val splitAt = if (line.unproto) monitorPayloadStart(line.text) else -1
-                if (splitAt > 0) {
-                    Text(annotated.subSequence(0, splitAt - 1), style = monoStyle)
-                    Text(
-                        annotated.subSequence(splitAt, annotated.length),
-                        style = monoStyle,
-                        modifier = Modifier.padding(start = 12.dp, bottom = 2.dp),
-                    )
-                } else {
-                    Text(annotated, style = monoStyle)
+        SelectionContainer(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                items(displayed) { line ->
+                    val annotated = highlightMonitorLine(line.text, myCall, highlightPrefs, rules, mutedColor, errorColor)
+                    val splitAt = if (line.unproto) monitorPayloadStart(line.text) else -1
+                    if (splitAt > 0) {
+                        Text(annotated.subSequence(0, splitAt - 1), style = monoStyle)
+                        Text(
+                            annotated.subSequence(splitAt, annotated.length),
+                            style = monoStyle,
+                            modifier = Modifier.padding(start = 12.dp, bottom = 2.dp),
+                        )
+                    } else {
+                        Text(annotated, style = monoStyle)
+                    }
                 }
             }
         }

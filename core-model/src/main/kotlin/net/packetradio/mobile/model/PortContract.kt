@@ -102,12 +102,12 @@ sealed interface PortCommand {
         override fun toString(): String = "Send(id=$id, bytes=${bytes.size}B)"
     }
 
-    class SendUnproto(val dest: String, val via: List<String>, val bytes: ByteArray) : PortCommand {
+    class SendUnproto(val dest: String, val via: List<String>, val bytes: ByteArray, val pid: Int = 0xF0) : PortCommand {
         override fun equals(other: Any?): Boolean =
-            other is SendUnproto && dest == other.dest && via == other.via && bytes.contentEquals(other.bytes)
+            other is SendUnproto && dest == other.dest && via == other.via && pid == other.pid && bytes.contentEquals(other.bytes)
 
-        override fun hashCode(): Int = (31 * dest.hashCode() + via.hashCode()) * 31 + bytes.contentHashCode()
-        override fun toString(): String = "SendUnproto(dest=$dest, via=$via, bytes=${bytes.size}B)"
+        override fun hashCode(): Int = ((31 * dest.hashCode() + via.hashCode()) * 31 + pid) * 31 + bytes.contentHashCode()
+        override fun toString(): String = "SendUnproto(dest=$dest, via=$via, pid=0x${pid.toString(16)}, bytes=${bytes.size}B)"
     }
 }
 

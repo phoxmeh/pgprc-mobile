@@ -100,7 +100,7 @@ class KissTcpRunner(private val config: PortConfig.KissTcp) : PortRunner {
                                     val source = Ax25Address.parse(config.myCall)
                                     val destination = Ax25Address.parse(command.dest)
                                     val digis = command.via.map { Ax25Address.parse(it) }
-                                    val frame = Ax25.encodeUiFrame(source, destination, digis, info = command.bytes)
+                                    val frame = Ax25.encodeUiFrame(source, destination, digis, pid = command.pid, info = command.bytes)
                                     writeKiss(Kiss.encodeDataFrame(KISS_PORT, frame))
 
                                     val viaSuffix = if (command.via.isEmpty()) "" else " via ${command.via.joinToString(",")}"

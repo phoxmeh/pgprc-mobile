@@ -12,13 +12,15 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import net.packetradio.mobile.service.PacketRadioService
-import net.packetradio.mobile.ui.heard.HeardStationDetailScreen
+import net.packetradio.mobile.ui.heard.AddressBookEntryScreen
 import net.packetradio.mobile.ui.heard.HeardStationsScreen
 import net.packetradio.mobile.ui.notifications.NotificationDetailScreen
 import net.packetradio.mobile.ui.notifications.NotificationsScreen
@@ -55,7 +57,18 @@ class MainActivity : ComponentActivity() {
         setContent {
             PgprcMobileTheme {
                 val navController = rememberNavController()
-                NavHost(navController, startDestination = "session") {
+                // Slide animations keep every destination fully opaque during transitions.
+                // The Navigation 2.9 default (fadeIn/Out tween 700ms) renders SessionScreen at
+                // near-zero alpha for the first ~500ms; tapping the hamburger in that window
+                // shows the raw white window background instead of the scrim+drawer overlay.
+                NavHost(
+                    navController = navController,
+                    startDestination = "session",
+                    enterTransition = { slideInHorizontally(initialOffsetX = { it }) },
+                    exitTransition = { slideOutHorizontally(targetOffsetX = { -it }) },
+                    popEnterTransition = { slideInHorizontally(initialOffsetX = { -it }) },
+                    popExitTransition = { slideOutHorizontally(targetOffsetX = { it }) },
+                ) {
                     composable("session") {
                         SessionScreen(
                             onOpenSettings = { navController.navigate("settings") },
@@ -78,10 +91,10 @@ class MainActivity : ComponentActivity() {
                         arguments = listOf(navArgument("callsign") { type = NavType.StringType }),
                     ) { backStackEntry ->
                         val callsign = backStackEntry.arguments?.getString("callsign").orEmpty()
-                        HeardStationDetailScreen(
-                            callsign = callsign,
+                        AddressBookEntryScreen(
+                            baseCallsign = callsign,
                             onBack = { navController.popBackStack() },
-                            onDelete = { navController.popBackStack() },
+                            onDeleted = { navController.popBackStack() },
                         )
                     }
                     composable("notifications") {

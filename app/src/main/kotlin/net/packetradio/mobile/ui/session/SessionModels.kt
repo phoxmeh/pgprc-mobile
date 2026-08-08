@@ -3,6 +3,19 @@ package net.packetradio.mobile.ui.session
 import net.packetradio.mobile.model.ConnState
 import net.packetradio.mobile.model.ConnectionId
 import net.packetradio.mobile.model.PortEntry
+import net.packetradio.mobile.protocol.NETROM_DEFAULT_WINDOW
+
+/** Live state for an open NET/ROM L3 circuit on a tab. */
+data class NetRomCircuit(
+    val myCircuitIndex: Int,
+    val myCircuitId: Int,
+    val remoteCircuitIndex: Int = 0,
+    val remoteCircuitId: Int = 0,
+    val gateway: String,
+    val txSeq: Int = 0,
+    val rxSeq: Int = 0,
+    val windowSize: Int = NETROM_DEFAULT_WINDOW,
+)
 
 /**
  * One dialed session tab's state. Identity (`portId`/`node`/`via`) is fixed
@@ -19,6 +32,8 @@ data class SessionTabState(
     val portId: String? = null,
     val node: String = "",
     val via: String = "",
+    val tag: String? = null,
+    val netRomCircuit: NetRomCircuit? = null,
     val pinned: Boolean = false,
     /** Set once this tab's own `OpenConnection` is acknowledged by `ConnectionOpened`. */
     val connectionId: ConnectionId? = null,
@@ -35,6 +50,8 @@ data class SessionTabState(
     val initiatedClose: Boolean = false,
     /** True once this connection reached CONNECTED at least once — distinguishes a remote DISC (graceful) from a failed SABM. */
     val wasConnected: Boolean = false,
+    /** False when the last received data packet had no trailing newline — next packet's first segment appends to the last line. */
+    val lastLineComplete: Boolean = true,
 )
 
 /** Whether this tab has a live, acknowledged two-way connection right now. */

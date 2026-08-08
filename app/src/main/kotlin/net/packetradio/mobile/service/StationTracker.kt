@@ -10,6 +10,7 @@ import kotlinx.coroutines.launch
 import net.packetradio.mobile.MainActivity
 import net.packetradio.mobile.R
 import net.packetradio.mobile.data.AddressBookRepository
+import net.packetradio.mobile.data.NetRomRepository
 import net.packetradio.mobile.data.NotificationRepository
 import net.packetradio.mobile.model.PortEvent
 import net.packetradio.mobile.protocol.AgwFrame
@@ -31,13 +32,14 @@ class StationTracker(
     private val scope: CoroutineScope,
     private val portManager: PortManager,
     private val addressBook: AddressBookRepository,
+    private val netRom: NetRomRepository,
     private val notifications: NotificationRepository,
 ) {
     fun start() {
         scope.launch {
             portManager.events.collect { envelope ->
                 when (val event = envelope.event) {
-                    is PortEvent.StationHeard -> addressBook.recordHeard(event.callsign)
+                    is PortEvent.StationHeard -> addressBook.recordHeard(event.callsign, viaPath = "")
                     is PortEvent.UnprotoReceived -> handleUnproto(envelope.portId, event)
                     else -> {}
                 }
@@ -48,11 +50,20 @@ class StationTracker(
     private suspend fun handleUnproto(portId: String, event: PortEvent.UnprotoReceived) {
         if (event.to.equals(NODES_DEST, ignoreCase = true) && event.pid == NETROM_PID) {
             decodeNetRomNodes(event.data)?.let { broadcast ->
+                // Address book: record all heard callsigns (direct neighbors only get a via path)
                 addressBook.recordNodeBroadcast(
                     event.from,
                     broadcast.senderAlias,
-                    broadcast.neighbors.map { it.callsign.label() to it.alias },
+                    broadcast.neighbors.map { neighbor ->
+                        val via = if (neighbor.bestNeighbor.label() == neighbor.callsign.label()) event.from else null
+                        Triple(neighbor.callsign.label(), neighbor.alias, via)
+                    },
                 )
+                // Routing table: only direct neighbors (bestNeighbor == neighbor callsign)
+                val directNeighbors = broadcast.neighbors
+                    .filter { it.bestNeighbor.label() == it.callsign.label() }
+                    .map { Triple(it.callsign.label(), it.alias, it.quality) }
+                netRom.processNodeBroadcast(portId, event.from, directNeighbors)
             }
         }
 

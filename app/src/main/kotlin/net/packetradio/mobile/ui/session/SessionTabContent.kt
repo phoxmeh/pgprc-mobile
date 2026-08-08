@@ -6,9 +6,11 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -17,6 +19,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -62,6 +65,7 @@ fun SessionTabContent(
     myCall: String,
     highlightPrefs: HighlightPrefs,
     fontSizeSp: Float = 12f,
+    miniMonitorVisible: Boolean = true,
     onToggleNodeConnection: () -> Unit,
     onInputChanged: (String) -> Unit,
     onSend: () -> Unit,
@@ -75,25 +79,34 @@ fun SessionTabContent(
     ClearFocusWhenKeyboardHides()
 
     Column(Modifier.fillMaxSize().padding(12.dp).clearFocusOnTapOutside()) {
-        MiniMonitor(
-            monitorLines,
-            height = monitorHeight,
-            myCall = myCall,
-            highlightPrefs = highlightPrefs,
-            fontSizeSp = fontSizeSp,
-            mutedColor = mutedColor,
-            errorColor = errorColor,
-        )
-        MonitorResizeHandle(
-            onDrag = { deltaPx ->
-                val deltaDp = with(density) { deltaPx.toDp() }
-                monitorHeight = (monitorHeight + deltaDp).coerceIn(40.dp, 400.dp)
-            },
-        )
+        if (miniMonitorVisible) {
+            MiniMonitor(
+                monitorLines,
+                height = monitorHeight,
+                myCall = myCall,
+                highlightPrefs = highlightPrefs,
+                fontSizeSp = fontSizeSp,
+                mutedColor = mutedColor,
+                errorColor = errorColor,
+            )
+            MonitorResizeHandle(
+                onDrag = { deltaPx ->
+                    val deltaDp = with(density) { deltaPx.toDp() }
+                    monitorHeight = (monitorHeight + deltaDp).coerceIn(40.dp, 400.dp)
+                },
+            )
+        }
 
-        if (tab.via.isNotBlank()) {
+        val viaTagLine = buildString {
+            if (tab.via.isNotBlank()) append("Via ${tab.via}")
+            if (tab.tag != null) {
+                if (isNotEmpty()) append("  ")
+                append("#${tab.tag}")
+            }
+        }
+        if (viaTagLine.isNotEmpty()) {
             Text(
-                "Via ${tab.via}",
+                viaTagLine,
                 style = MaterialTheme.typography.bodySmall,
                 color = mutedColor,
                 modifier = Modifier.padding(top = 4.dp),
@@ -103,23 +116,31 @@ fun SessionTabContent(
         // Scrollback — word wrap disabled; scrollable both axes so long BBS lines don't break layout
         val vScrollState = rememberScrollState()
         val hScrollState = rememberScrollState()
-        LaunchedEffect(tab.lines.size) {
-            vScrollState.animateScrollTo(vScrollState.maxValue)
+        // Scroll to bottom whenever new content arrives OR the keyboard opens (reducing viewport height).
+        // Using Int.MAX_VALUE so the scroll target is always the bottom regardless of layout timing.
+        val imeHeight = WindowInsets.ime.getBottom(density)
+        LaunchedEffect(tab.lines.size, imeHeight) {
+            vScrollState.animateScrollTo(Int.MAX_VALUE)
         }
-        Column(
+        SelectionContainer(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                .padding(top = 8.dp)
-                .verticalScroll(vScrollState)
-                .horizontalScroll(hScrollState),
+                .padding(top = 8.dp),
         ) {
-            for (line in tab.lines) {
-                Text(
-                    highlightMonitorLine(line, myCall, highlightPrefs, defaultHighlightRules(), mutedColor, errorColor),
-                    style = monoStyle,
-                    softWrap = false,
-                )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(vScrollState)
+                    .horizontalScroll(hScrollState),
+            ) {
+                for (line in tab.lines) {
+                    Text(
+                        highlightMonitorLine(line, myCall, highlightPrefs, defaultHighlightRules(), mutedColor, errorColor),
+                        style = monoStyle,
+                        softWrap = false,
+                    )
+                }
             }
         }
 

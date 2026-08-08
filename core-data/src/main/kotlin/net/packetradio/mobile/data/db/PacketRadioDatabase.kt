@@ -4,8 +4,8 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
-import net.packetradio.mobile.data.dao.AddressBookDao
 import net.packetradio.mobile.data.dao.BeaconDao
+import net.packetradio.mobile.data.dao.CallsignDao
 import net.packetradio.mobile.data.dao.HeardBeaconDao
 import net.packetradio.mobile.data.dao.HighlightRuleDao
 import net.packetradio.mobile.data.dao.MailboxMessageDao
@@ -13,9 +13,11 @@ import net.packetradio.mobile.data.dao.NotifiedPacketDao
 import net.packetradio.mobile.data.dao.PinnedSessionDao
 import net.packetradio.mobile.data.dao.PortDao
 import net.packetradio.mobile.data.dao.QsoLogDao
+import net.packetradio.mobile.data.dao.SsidDao
+import net.packetradio.mobile.data.dao.NetRomNodeDao
 import net.packetradio.mobile.data.dao.WatchedDestinationDao
-import net.packetradio.mobile.data.entity.AddressBookEntity
 import net.packetradio.mobile.data.entity.BeaconEntity
+import net.packetradio.mobile.data.entity.CallsignEntity
 import net.packetradio.mobile.data.entity.HeardBeaconEntity
 import net.packetradio.mobile.data.entity.HighlightRuleEntity
 import net.packetradio.mobile.data.entity.MailboxMessageEntity
@@ -23,19 +25,15 @@ import net.packetradio.mobile.data.entity.NotifiedPacketEntity
 import net.packetradio.mobile.data.entity.PinnedSessionEntity
 import net.packetradio.mobile.data.entity.PortEntryEntity
 import net.packetradio.mobile.data.entity.QsoLogEntryEntity
+import net.packetradio.mobile.data.entity.NetRomNodeEntity
+import net.packetradio.mobile.data.entity.SsidEntity
 import net.packetradio.mobile.data.entity.WatchedDestinationEntity
 
-/**
- * The list-shaped half of the desktop's config split (`ports.toml`,
- * `address_book.toml`, `qso_log.toml`, `notified_packets.toml`, `rules.toml`,
- * `pinned_sessions.toml`, `beacons.toml`, `mailbox.toml`'s `messages`) — the
- * scalar-only half (`UiPrefs`, etc.) lives in [net.packetradio.mobile.data.prefs.AppPreferences]
- * (DataStore) instead, since nothing there is a list.
- */
 @Database(
     entities = [
         PortEntryEntity::class,
-        AddressBookEntity::class,
+        CallsignEntity::class,
+        SsidEntity::class,
         PinnedSessionEntity::class,
         MailboxMessageEntity::class,
         NotifiedPacketEntity::class,
@@ -44,13 +42,15 @@ import net.packetradio.mobile.data.entity.WatchedDestinationEntity
         HighlightRuleEntity::class,
         HeardBeaconEntity::class,
         WatchedDestinationEntity::class,
+        NetRomNodeEntity::class,
     ],
-    version = 2,
+    version = 5,
     exportSchema = false,
 )
 abstract class PacketRadioDatabase : RoomDatabase() {
     abstract fun portDao(): PortDao
-    abstract fun addressBookDao(): AddressBookDao
+    abstract fun callsignDao(): CallsignDao
+    abstract fun ssidDao(): SsidDao
     abstract fun pinnedSessionDao(): PinnedSessionDao
     abstract fun mailboxMessageDao(): MailboxMessageDao
     abstract fun notifiedPacketDao(): NotifiedPacketDao
@@ -59,6 +59,7 @@ abstract class PacketRadioDatabase : RoomDatabase() {
     abstract fun highlightRuleDao(): HighlightRuleDao
     abstract fun heardBeaconDao(): HeardBeaconDao
     abstract fun watchedDestinationDao(): WatchedDestinationDao
+    abstract fun netRomNodeDao(): NetRomNodeDao
 
     companion object {
         @Volatile
@@ -71,9 +72,6 @@ abstract class PacketRadioDatabase : RoomDatabase() {
                     PacketRadioDatabase::class.java,
                     "packet-radio.db",
                 )
-                    // No shipped users yet (exportSchema is already off, nothing tracks migrations) —
-                    // simplest to just rebuild rather than write a migration for the address_book
-                    // column changes and the two new tables.
                     .fallbackToDestructiveMigration(dropAllTables = true)
                     .build().also { instance = it }
             }

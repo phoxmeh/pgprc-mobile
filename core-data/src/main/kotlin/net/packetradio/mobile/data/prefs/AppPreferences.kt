@@ -48,6 +48,9 @@ class AppPreferences(private val context: Context) {
 
         val NOTIFY_ENABLED = booleanPreferencesKey("notify_enabled")
         val MAILBOX_ENABLED = booleanPreferencesKey("mailbox_enabled")
+
+        val NETROM_MIN_QUALITY = intPreferencesKey("netrom_min_quality")
+        val NETROM_INITIAL_OBSOLESCENCE = intPreferencesKey("netrom_initial_obsolescence")
     }
 
     val uiPrefs: Flow<UiPrefs> = context.dataStore.data.map { prefs ->
@@ -122,6 +125,21 @@ class AppPreferences(private val context: Context) {
 
     suspend fun setMailboxEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs -> prefs[Keys.MAILBOX_ENABLED] = enabled }
+    }
+
+    val netRomMinQuality: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[Keys.NETROM_MIN_QUALITY] ?: 1
+    }
+
+    val netRomInitialObsolescence: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[Keys.NETROM_INITIAL_OBSOLESCENCE] ?: 5
+    }
+
+    suspend fun saveNetRomPrefs(minQuality: Int, initialObsolescence: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.NETROM_MIN_QUALITY] = minQuality.coerceIn(0, 255)
+            prefs[Keys.NETROM_INITIAL_OBSOLESCENCE] = initialObsolescence.coerceIn(1, 255)
+        }
     }
 
     private fun setOrRemove(prefs: MutablePreferences, key: Preferences.Key<String>, value: String?) {

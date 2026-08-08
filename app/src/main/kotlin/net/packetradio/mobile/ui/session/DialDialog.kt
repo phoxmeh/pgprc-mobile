@@ -4,14 +4,13 @@ package net.packetradio.mobile.ui.session
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Contacts
@@ -22,6 +21,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -36,13 +36,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.PopupProperties
-import net.packetradio.mobile.model.AddressBookEntry
-import net.packetradio.mobile.model.PortConfig
+import net.packetradio.mobile.model.NetRomNodeEntry
 import net.packetradio.mobile.model.PortEntry
+import net.packetradio.mobile.model.SsidEntry
 import net.packetradio.mobile.model.supportsConnect
 
 /**
@@ -51,31 +53,55 @@ import net.packetradio.mobile.model.supportsConnect
  * two-way AX.25 connection are offered here — AGWPE, KISS-TCP, and Bluetooth
  * KISS; USB-serial KISS isn't wired up yet and stays unproto-only on the
  * Monitor screen's ad-hoc bar for now (see [net.packetradio.mobile.model.supportsConnect]).
+ * Telnet ports are also excluded here — they auto-open a terminal tab on connect.
  *
  * Node/via are stored as typed (no live uppercase) — uppercase is applied on
  * submit so the IME doesn't trigger a re-layout on every keystroke. Space is
  * intercepted and replaced with hyphen since neither callsigns nor digipeater
  * paths ever contain spaces.
+ *
+ * The node autocomplete only shows directly-heard stations or those reachable
+ * via a single NET/ROM hop (i.e. with a non-blank `via` field) — multi-hop
+ * NODES entries are excluded to keep the list practical.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun DialDialog(
     ports: List<PortEntry>,
-    heardStations: List<AddressBookEntry> = emptyList(),
+    heardStations: List<SsidEntry> = emptyList(),
+    netRomNodes: List<NetRomNodeEntry> = emptyList(),
     onDismiss: () -> Unit,
-    onDial: (portId: String, node: String, via: String, connectImmediately: Boolean) -> Unit,
+    onDial: (portId: String, node: String, via: String, tag: String?, netRomGateway: String?, connectImmediately: Boolean) -> Unit,
 ) {
     val dialablePorts = ports.filter { it.config.supportsConnect() }
     var selectedPortId by remember { mutableStateOf(dialablePorts.firstOrNull()?.id) }
     var node by remember { mutableStateOf("") }
     var via by remember { mutableStateOf("") }
+    var selectedEntry by remember { mutableStateOf<SsidEntry?>(null) }
+    var selectedNetRomNode by remember { mutableStateOf<NetRomNodeEntry?>(null) }
     var showAddressBook by remember { mutableStateOf(false) }
 
-    val selectedPort = dialablePorts.find { it.id == selectedPortId }
-    val isTelnet = selectedPort?.config is PortConfig.Telnet
-    val canSubmit = selectedPortId != null && (isTelnet || node.isNotBlank())
+    // Only offer directly-heard or single-hop-reachable nodes in the inline autocomplete
+    val dialableStations = remember(heardStations) {
+        heardStations.filter { it.heardDirectly || it.viaPaths.isNotEmpty() }
+    }
+
+    val canSubmit = selectedPortId != null && node.isNotBlank()
+
+    fun resolvedNode(): String {
+        val trimmed = node.trim().uppercase()
+        val exactAlias = heardStations.firstOrNull { it.displayAlias?.equals(trimmed, ignoreCase = true) == true }
+        return exactAlias?.fullCallsign ?: trimmed
+    }
 
     fun submit(connectImmediately: Boolean) {
-        selectedPortId?.let { onDial(it, node.trim().uppercase(), via.trim().uppercase(), connectImmediately) }
+        selectedPortId?.let {
+            val resolvedCallsign = resolvedNode()
+            val tag = selectedEntry?.tag ?: heardStations
+                .firstOrNull { it.fullCallsign.equals(resolvedCallsign, ignoreCase = true) }?.tag
+            val netRomGateway = selectedNetRomNode?.bestNeighborCallsign
+            onDial(it, resolvedCallsign, via.trim().uppercase(), tag, netRomGateway, connectImmediately)
+        }
     }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -88,28 +114,48 @@ fun DialDialog(
                     selectedId = selectedPortId,
                     onSelected = { selectedPortId = it },
                 )
-                if (!isTelnet) {
-                    Row(
-                        verticalAlignment = Alignment.Bottom,
-                        modifier = Modifier.fillMaxWidth(),
+                Row(
+                    verticalAlignment = Alignment.Bottom,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    NodePicker(
+                        value = node,
+                        onValueChange = { new ->
+                            node = new.replace(' ', '-')
+                            selectedEntry = null
+                            selectedNetRomNode = null
+                        },
+                        suggestions = dialableStations,
+                        netRomNodes = netRomNodes,
+                        onSelect = { entry ->
+                            node = entry.fullCallsign
+                            selectedEntry = entry
+                            selectedNetRomNode = null
+                            if (via.isBlank()) via = entry.viaPaths.firstOrNull().orEmpty()
+                        },
+                        onSelectNetRom = { netRom ->
+                            node = netRom.callsign
+                            selectedNetRomNode = netRom
+                            selectedEntry = null
+                            via = ""
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
+                    IconButton(
+                        onClick = { showAddressBook = true },
+                        modifier = Modifier.padding(top = 8.dp),
                     ) {
-                        NodePicker(
-                            value = node,
-                            onValueChange = { node = it.replace(' ', '-') },
-                            suggestions = heardStations,
-                            onSelect = { entry ->
-                                node = entry.callsign
-                                if (via.isBlank() && entry.via.isNotBlank()) via = entry.via
-                            },
-                            modifier = Modifier.weight(1f),
-                        )
-                        IconButton(
-                            onClick = { showAddressBook = true },
-                            modifier = Modifier.padding(top = 8.dp),
-                        ) {
-                            Icon(Icons.Filled.Contacts, contentDescription = "Address book")
-                        }
+                        Icon(Icons.Filled.Contacts, contentDescription = "Address book")
                     }
+                }
+                if (selectedNetRomNode != null) {
+                    Text(
+                        "Via NET/ROM gateway: ${selectedNetRomNode!!.bestNeighborCallsign}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                } else {
                     OutlinedTextField(
                         value = via,
                         onValueChange = { via = it.replace(' ', '-') },
@@ -117,6 +163,22 @@ fun DialDialog(
                         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None),
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                     )
+                }
+                // Saved via path suggestions for the selected SSID
+                val viaSuggestions = if (selectedNetRomNode == null) selectedEntry?.viaPaths ?: emptyList() else emptyList()
+                if (viaSuggestions.isNotEmpty()) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.padding(top = 4.dp),
+                    ) {
+                        for (path in viaSuggestions) {
+                            FilterChip(
+                                selected = via.trim().uppercase() == path.uppercase(),
+                                onClick = { via = path },
+                                label = { Text(path, style = MaterialTheme.typography.bodySmall) },
+                            )
+                        }
+                    }
                 }
                 Spacer(Modifier.height(24.dp))
                 Row(
@@ -135,8 +197,9 @@ fun DialDialog(
         AddressBookPickerDialog(
             stations = heardStations,
             onSelect = { entry ->
-                node = entry.callsign
-                if (via.isBlank() && entry.via.isNotBlank()) via = entry.via
+                node = entry.fullCallsign
+                selectedEntry = entry
+                if (via.isBlank()) via = entry.viaPaths.firstOrNull().orEmpty()
                 showAddressBook = false
             },
             onDismiss = { showAddressBook = false },
@@ -150,23 +213,23 @@ fun DialDialog(
  */
 @Composable
 private fun AddressBookPickerDialog(
-    stations: List<AddressBookEntry>,
-    onSelect: (AddressBookEntry) -> Unit,
+    stations: List<SsidEntry>,
+    onSelect: (SsidEntry) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
-    val sorted = remember(stations) { stations.sortedBy { it.callsign } }
+    val sorted = remember(stations) { stations.sortedBy { it.fullCallsign } }
     val filtered = remember(query, sorted) {
         if (query.isBlank()) sorted
         else sorted.filter {
-            it.callsign.contains(query, ignoreCase = true) ||
+            it.fullCallsign.contains(query, ignoreCase = true) ||
                 it.displayAlias?.contains(query, ignoreCase = true) == true
         }
     }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Address Book") },
+        title = { Text("Known Nodes") },
         text = {
             Column {
                 OutlinedTextField(
@@ -177,14 +240,14 @@ private fun AddressBookPickerDialog(
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None),
                     modifier = Modifier.fillMaxWidth(),
                 )
-                LazyColumn(Modifier.heightIn(max = 300.dp).padding(top = 4.dp)) {
-                    items(filtered, key = { it.callsign }) { entry ->
+                Column(Modifier.padding(top = 4.dp)) {
+                    for (entry in filtered.take(20)) {
                         TextButton(
                             onClick = { onSelect(entry) },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Text(
-                                entry.displayAlias?.let { "${entry.callsign} ($it)" } ?: entry.callsign,
+                                entry.displayAlias?.let { "${entry.fullCallsign} ($it)" } ?: entry.fullCallsign,
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         }
@@ -198,45 +261,88 @@ private fun AddressBookPickerDialog(
 }
 
 /**
- * The "Node" field, editable, with an address-book autocomplete dropdown of [suggestions]
- * (heard stations, see [SessionViewModel.heardStations]) filtered by whatever's typed so far —
- * selecting one fills the node (and the via path too, if it's still blank).
+ * Node field with an inline (non-popup) suggestion list below it showing [suggestions] (address
+ * book) and [netRomNodes] (routing table) filtered to what's been typed. Address-book entries
+ * are shown first; NET/ROM routing-table nodes are shown with a "[N*]" marker.
  */
 @Composable
 private fun NodePicker(
     value: String,
     onValueChange: (String) -> Unit,
-    suggestions: List<AddressBookEntry>,
-    onSelect: (AddressBookEntry) -> Unit,
+    suggestions: List<SsidEntry>,
+    netRomNodes: List<NetRomNodeEntry> = emptyList(),
+    onSelect: (SsidEntry) -> Unit,
+    onSelectNetRom: (NetRomNodeEntry) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    var expanded by remember { mutableStateOf(false) }
-    val filtered = remember(value, suggestions) {
-        if (value.isBlank()) {
-            emptyList()
-        } else {
-            suggestions.filter {
-                it.callsign.contains(value, ignoreCase = true) || it.displayAlias?.contains(value, ignoreCase = true) == true
-            }.take(8)
-        }
+    val filteredAddressBook = remember(value, suggestions) {
+        if (value.isBlank()) emptyList()
+        else suggestions.filter {
+            it.fullCallsign.contains(value, ignoreCase = true) ||
+                it.displayAlias?.contains(value, ignoreCase = true) == true
+        }.take(5)
     }
-    val showMenu = expanded && filtered.isNotEmpty()
+    val filteredNetRom = remember(value, netRomNodes) {
+        if (value.isBlank()) emptyList()
+        else netRomNodes.filter {
+            it.callsign.contains(value, ignoreCase = true) ||
+                it.alias.contains(value, ignoreCase = true)
+        }.take(3)
+    }
+    val hasResults = filteredAddressBook.isNotEmpty() || filteredNetRom.isNotEmpty()
 
-    ExposedDropdownMenuBox(expanded = showMenu, onExpandedChange = { expanded = it }, modifier = modifier) {
+    Column(modifier) {
         OutlinedTextField(
             value = value,
-            onValueChange = { onValueChange(it); expanded = true },
+            onValueChange = onValueChange,
             label = { Text("Node") },
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None),
-            modifier = Modifier.fillMaxWidth().padding(top = 8.dp).menuAnchor(ExposedDropdownMenuAnchorType.PrimaryEditable),
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
         )
-        // focusable = false keeps the keyboard visible when the suggestions dropdown appears
-        DropdownMenu(expanded = showMenu, onDismissRequest = { expanded = false }, properties = PopupProperties(focusable = false)) {
-            for (entry in filtered) {
-                DropdownMenuItem(
-                    text = { Text(entry.displayAlias?.let { "${entry.callsign} ($it)" } ?: entry.callsign) },
-                    onClick = { onSelect(entry); expanded = false },
-                )
+        if (hasResults) {
+            Surface(
+                tonalElevation = 4.dp,
+                shape = RoundedCornerShape(4.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+            ) {
+                Column {
+                    for (entry in filteredAddressBook) {
+                        TextButton(
+                            onClick = { onSelect(entry) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            val mutedColor = MaterialTheme.colorScheme.onSurfaceVariant
+                            Text(
+                                buildAnnotatedString {
+                                    append(entry.fullCallsign)
+                                    entry.displayAlias?.let { append(" ($it)") }
+                                    entry.tag?.let {
+                                        append(" ")
+                                        withStyle(SpanStyle(color = mutedColor)) { append("#$it") }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                    for (netRom in filteredNetRom) {
+                        TextButton(
+                            onClick = { onSelectNetRom(netRom) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            val mutedColor = MaterialTheme.colorScheme.onSurfaceVariant
+                            Text(
+                                buildAnnotatedString {
+                                    append(netRom.callsign)
+                                    if (netRom.alias.isNotBlank()) append(" (${netRom.alias})")
+                                    append(" ")
+                                    withStyle(SpanStyle(color = mutedColor)) { append("[N*]") }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                }
             }
         }
     }

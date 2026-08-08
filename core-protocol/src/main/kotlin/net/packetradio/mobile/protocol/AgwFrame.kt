@@ -61,8 +61,8 @@ class AgwFrame(
         const val HEADER_LEN = 36
         const val CALL_FIELD_LEN = 10
 
-        fun create(port: Int, dataKind: Char, callFrom: String, callTo: String, data: ByteArray): AgwFrame =
-            AgwFrame(port, dataKind, pid = 0xF0, callFrom = callFrom, callTo = callTo, data = data)
+        fun create(port: Int, dataKind: Char, callFrom: String, callTo: String, data: ByteArray, pid: Int = 0xF0): AgwFrame =
+            AgwFrame(port, dataKind, pid = pid, callFrom = callFrom, callTo = callTo, data = data)
 
         /** Kind `'P'`, port 0, empty CallFrom/CallTo; data = two 255-byte NUL-padded fields. */
         fun login(username: String, password: String): AgwFrame {

@@ -6,14 +6,11 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -51,9 +48,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import net.packetradio.mobile.model.AddressBookEntry
-
-private val IndirectDotColor = Color(0xFFFFCC80)
+import net.packetradio.mobile.model.CallsignEntry
 
 private enum class SortMode(val label: String) { CALL("Call"), LAST_HEARD("Last Heard") }
 
@@ -71,31 +66,29 @@ fun HeardStationsScreen(
     var pendingDelete by remember { mutableStateOf<String?>(null) }
 
     val filtered = remember(entries, filter, sortMode, sortAscending) {
-        val byFilter = if (filter.isBlank()) {
-            entries
-        } else {
-            entries.filter {
-                it.callsign.contains(filter, ignoreCase = true) || it.displayAlias?.contains(filter, ignoreCase = true) == true
-            }
+        val byFilter = if (filter.isBlank()) entries else entries.filter { entry ->
+            entry.baseCallsign.contains(filter, ignoreCase = true) ||
+                entry.ssids.any { it.displayAlias?.contains(filter, ignoreCase = true) == true }
         }
         val sorted = when (sortMode) {
-            SortMode.CALL -> byFilter.sortedBy { it.callsign }
-            SortMode.LAST_HEARD -> byFilter.sortedByDescending { it.lastHeard.orEmpty() }
+            SortMode.CALL -> byFilter.sortedBy { it.baseCallsign }
+            SortMode.LAST_HEARD -> byFilter.sortedByDescending { entry ->
+                entry.ssids.mapNotNull { it.lastHeard }.maxOrNull().orEmpty()
+            }
         }
-        if (sortAscending) sorted else sorted.reversed()
+        if (!sortAscending) sorted else sorted.reversed()
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Heard Stations") },
+                title = { Text("Known Nodes") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
-                    // Direction toggle — always visible so the current direction is always clear
                     IconButton(onClick = { sortAscending = !sortAscending }) {
                         Icon(
                             if (sortAscending) Icons.Filled.ArrowUpward else Icons.Filled.ArrowDownward,
@@ -103,7 +96,6 @@ fun HeardStationsScreen(
                             tint = MaterialTheme.colorScheme.primary,
                         )
                     }
-                    // Sort-field picker — checkmark on active item
                     Box {
                         IconButton(onClick = { sortMenuExpanded = true }) {
                             Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = "Sort by")
@@ -134,11 +126,11 @@ fun HeardStationsScreen(
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp),
             )
             LazyColumn(Modifier.fillMaxSize()) {
-                items(filtered, key = { it.callsign }) { entry ->
+                items(filtered, key = { it.baseCallsign }) { entry ->
                     val dismissState = rememberSwipeToDismissBoxState()
                     LaunchedEffect(dismissState.currentValue) {
                         if (dismissState.currentValue == SwipeToDismissBoxValue.EndToStart) {
-                            pendingDelete = entry.callsign
+                            pendingDelete = entry.baseCallsign
                             dismissState.reset()
                         }
                     }
@@ -165,20 +157,20 @@ fun HeardStationsScreen(
                             }
                         },
                     ) {
-                        HeardStationRow(entry, onClick = { onOpenStation(entry.callsign) })
+                        CallsignRow(entry, onClick = { onOpenStation(entry.baseCallsign) })
                     }
                 }
             }
         }
     }
 
-    pendingDelete?.let { callsign ->
+    pendingDelete?.let { base ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
-            title = { Text("Remove $callsign?") },
-            text = { Text("This will remove $callsign from the heard stations list. It will re-appear the next time a frame from this station is heard.") },
+            title = { Text("Remove $base?") },
+            text = { Text("This will remove $base and all its known SSIDs. They will re-appear the next time a frame from this station is heard.") },
             confirmButton = {
-                TextButton(onClick = { viewModel.deleteEntry(callsign); pendingDelete = null }) { Text("Remove") }
+                TextButton(onClick = { viewModel.deleteCallsign(base); pendingDelete = null }) { Text("Remove") }
             },
             dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Cancel") } },
         )
@@ -186,29 +178,21 @@ fun HeardStationsScreen(
 }
 
 @Composable
-private fun HeardStationRow(entry: AddressBookEntry, onClick: () -> Unit) {
+private fun CallsignRow(entry: CallsignEntry, onClick: () -> Unit) {
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(8.dp),
         modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
     ) {
-        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (!entry.heardDirectly) {
-                Box(Modifier.padding(end = 8.dp).size(8.dp).background(IndirectDotColor, CircleShape))
-            }
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(entry.callsign, style = MaterialTheme.typography.bodyLarge)
-                    entry.displayAlias?.let {
-                        Text(
-                            " ($it)",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+        Column(Modifier.padding(12.dp)) {
+            Text(entry.baseCallsign, style = MaterialTheme.typography.bodyLarge)
+            if (entry.ssids.isNotEmpty()) {
+                val ssidText = entry.ssids.joinToString(", ") { ssid ->
+                    val suffix = if (ssid.ssidNumber == 0) "-0" else "-${ssid.ssidNumber}"
+                    ssid.displayAlias?.let { "$suffix ($it)" } ?: suffix
                 }
                 Text(
-                    "Heard ${entry.heardCount}x" + (entry.lastHeard?.let { " · last $it" } ?: ""),
+                    ssidText,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

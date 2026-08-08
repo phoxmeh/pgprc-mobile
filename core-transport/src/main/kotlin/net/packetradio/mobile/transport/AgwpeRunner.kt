@@ -112,7 +112,7 @@ class AgwpeRunner(private val config: PortConfig.Agwpe) : PortRunner {
                                 ),
                             )
                             val frame = if (command.via.isEmpty()) {
-                                AgwFrame.create(config.radioPort, 'M', config.myCall, command.dest, command.bytes)
+                                AgwFrame.create(config.radioPort, 'M', config.myCall, command.dest, command.bytes, pid = command.pid)
                             } else {
                                 AgwFrame.unprotoVia(config.radioPort, config.myCall, command.dest, command.via, command.bytes)
                             }

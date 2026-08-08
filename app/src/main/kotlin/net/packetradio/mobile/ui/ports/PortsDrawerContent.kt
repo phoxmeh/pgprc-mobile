@@ -126,7 +126,7 @@ fun PortsDrawerContent(
                 onClick = onOpenNotifications,
             )
             DrawerRow(
-                label = "Heard Stations",
+                label = "Known Nodes",
                 selected = false,
                 leadingIcon = Icons.Filled.Radar,
                 onClick = onOpenHeardStations,

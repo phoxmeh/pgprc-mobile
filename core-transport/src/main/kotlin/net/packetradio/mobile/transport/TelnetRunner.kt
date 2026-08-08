@@ -2,6 +2,7 @@ package net.packetradio.mobile.transport
 
 import java.io.IOException
 import java.io.OutputStream
+import java.net.InetSocketAddress
 import java.net.Socket
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
@@ -34,9 +35,12 @@ class TelnetRunner(private val config: PortConfig.Telnet) : PortRunner {
     override suspend fun run(commands: ReceiveChannel<PortCommand>, events: SendChannel<PortEvent>) {
         withContext(Dispatchers.IO) {
             val socket = try {
-                Socket(config.host, config.port)
+                Socket().also { it.connect(InetSocketAddress(config.host, config.port), CONNECT_TIMEOUT_MS) }
             } catch (e: IOException) {
-                events.send(PortEvent.PortError(e.message ?: "connection failed"))
+                events.send(PortEvent.PortError("${config.host}:${config.port} — ${e.message ?: "connection failed"}"))
+                return@withContext
+            } catch (e: Exception) {
+                events.send(PortEvent.PortError("${config.host}:${config.port} — ${e.javaClass.simpleName}: ${e.message}"))
                 return@withContext
             }
             events.send(PortEvent.PortConnected)
@@ -77,13 +81,15 @@ class TelnetRunner(private val config: PortConfig.Telnet) : PortRunner {
                                     if (connectionId != null) {
                                         // Only one telnet session per port — fail the new attempt immediately.
                                         val id = nextId++
-                                        events.send(PortEvent.ConnectionOpened(id, config.host))
+                                        events.send(PortEvent.ConnectionOpened(id, command.remote))
                                         events.send(PortEvent.ConnStateChanged(id, ConnState.DISCONNECTED))
                                         events.send(PortEvent.ConnectionClosed(id))
                                     } else {
                                         val id = nextId++
                                         connectionId = id
-                                        events.send(PortEvent.ConnectionOpened(id, config.host))
+                                        // Mirror the remote label from the command so SessionViewModel's
+                                        // pendingOpens lookup (keyed by portId to remote) finds the tab.
+                                        events.send(PortEvent.ConnectionOpened(id, command.remote))
                                         events.send(PortEvent.ConnStateChanged(id, ConnState.CONNECTED))
                                     }
                                 }
@@ -176,6 +182,7 @@ class TelnetRunner(private val config: PortConfig.Telnet) : PortRunner {
     }
 
     private companion object {
+        const val CONNECT_TIMEOUT_MS = 15_000
         val IAC: Byte = 255.toByte()
         val WILL: Byte = 251.toByte()
         val WONT: Byte = 252.toByte()
