@@ -127,6 +127,7 @@ fun PortFormDialog(
     var digirigSerialVendorId by remember { mutableStateOf(digirigInitial?.serialVendorId) }
     var digirigSerialProductId by remember { mutableStateOf(digirigInitial?.serialProductId) }
     var digirigSerialName by remember { mutableStateOf(digirigInitial?.serialDeviceName ?: "") }
+    var digirigSerialPortIndex by remember { mutableStateOf(digirigInitial?.serialPortIndex ?: 0) }
     var digirigAudioProductName by remember { mutableStateOf(digirigInitial?.audioProductName ?: "") }
     var modemMode by remember { mutableStateOf(digirigInitial?.modemMode ?: ModemMode.BELL_202_1200) }
     var afskSettings by remember { mutableStateOf(digirigInitial?.afskSettings ?: AfskSettings()) }
@@ -206,10 +207,12 @@ fun PortFormDialog(
                             selectedVendorId = digirigSerialVendorId,
                             selectedProductId = digirigSerialProductId,
                             selectedName = digirigSerialName,
-                            onDeviceSelected = { vid, pid, name ->
+                            selectedPortIndex = digirigSerialPortIndex,
+                            onDeviceSelected = { vid, pid, name, portIdx ->
                                 digirigSerialVendorId = vid
                                 digirigSerialProductId = pid
                                 digirigSerialName = name
+                                digirigSerialPortIndex = portIdx
                             },
                         )
                         Row(
@@ -367,6 +370,7 @@ fun PortFormDialog(
                             serialProductId = pid,
                             serialDeviceName = digirigSerialName,
                             audioProductName = digirigAudioProductName,
+                            serialPortIndex = digirigSerialPortIndex,
                             myCall = myCall,
                             modemMode = modemMode,
                             afskSettings = afskSettings,

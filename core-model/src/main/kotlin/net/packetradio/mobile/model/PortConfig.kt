@@ -85,6 +85,8 @@ sealed interface PortConfig {
         val serialDeviceName: String = "",
         /** Product name of the USB audio device to use, or blank to auto-select the first one found. */
         val audioProductName: String = "",
+        /** Zero-based index of the serial port to open for PTT (most radios expose port 1 for PTT). */
+        val serialPortIndex: Int = 0,
         val myCall: String,
         val modemMode: ModemMode = ModemMode.BELL_202_1200,
         val afskSettings: AfskSettings = AfskSettings(),

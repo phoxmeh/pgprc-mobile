@@ -71,7 +71,8 @@ fun UsbSerialDevicePicker(
     selectedVendorId: Int?,
     selectedProductId: Int?,
     selectedName: String,
-    onDeviceSelected: (vendorId: Int, productId: Int, name: String) -> Unit,
+    selectedPortIndex: Int = 0,
+    onDeviceSelected: (vendorId: Int, productId: Int, name: String, portIndex: Int) -> Unit,
 ) {
     val context = LocalContext.current
     var expanded by remember { mutableStateOf(false) }
@@ -79,8 +80,9 @@ fun UsbSerialDevicePicker(
     // Always reference the latest callback so the BroadcastReceiver never holds a stale lambda.
     val currentOnDeviceSelected by rememberUpdatedState(onDeviceSelected)
 
-    // Pending permission grant: remember the device the user tapped while we wait for the dialog.
+    // Pending permission grant: remember the device and port index while we wait for the dialog.
     var pendingDevice by remember { mutableStateOf<UsbDevice?>(null) }
+    var pendingPortIndex by remember { mutableStateOf(0) }
 
     // Register for USB permission result broadcast for the duration of this composable's lifetime.
     DisposableEffect(Unit) {
@@ -89,9 +91,14 @@ fun UsbSerialDevicePicker(
                 if (intent.action != ACTION_USB_PERMISSION) return
                 val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
                 val device = pendingDevice ?: return
+                val portIdx = pendingPortIndex
                 pendingDevice = null
                 if (granted) {
-                    currentOnDeviceSelected(device.vendorId, device.productId, device.productName ?: "USB serial")
+                    currentOnDeviceSelected(
+                        device.vendorId, device.productId,
+                        device.productName ?: "USB serial",
+                        portIdx,
+                    )
                 }
             }
         }
@@ -109,11 +116,12 @@ fun UsbSerialDevicePicker(
         if (expanded) UsbSerialProber.getDefaultProber().findAllDrivers(usbManager) else emptyList()
     }
 
+    val portSuffix = if (selectedPortIndex > 0) " — port $selectedPortIndex" else ""
     val label = when {
         selectedVendorId != null && selectedName.isNotBlank() ->
-            "$selectedName (VID 0x${selectedVendorId.toString(16)}, PID 0x${selectedProductId?.toString(16)})"
+            "$selectedName$portSuffix (VID 0x${selectedVendorId.toString(16)}, PID 0x${selectedProductId?.toString(16)})"
         selectedVendorId != null ->
-            "VID 0x${selectedVendorId.toString(16)}, PID 0x${selectedProductId?.toString(16)}"
+            "VID 0x${selectedVendorId.toString(16)}, PID 0x${selectedProductId?.toString(16)}$portSuffix"
         else -> "(select a connected USB serial device)"
     }
 
@@ -137,27 +145,35 @@ fun UsbSerialDevicePicker(
             }
             for (driver in drivers) {
                 val device = driver.device
-                val name = device.productName ?: "USB serial (VID 0x${device.vendorId.toString(16)})"
-                DropdownMenuItem(
-                    text = { Text("$name  ·  ${driver.javaClass.simpleName.removeSuffix("Driver")}") },
-                    onClick = {
-                        expanded = false
-                        if (usbManager.hasPermission(device)) {
-                            onDeviceSelected(device.vendorId, device.productId, name)
-                        } else {
-                            pendingDevice = device
-                            // FLAG_MUTABLE required so UsbManager can fill in EXTRA_PERMISSION_GRANTED.
-                            val mutabilityFlag =
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
-                            val intent = PendingIntent.getBroadcast(
-                                context, 0,
-                                Intent(ACTION_USB_PERMISSION),
-                                PendingIntent.FLAG_UPDATE_CURRENT or mutabilityFlag,
-                            )
-                            usbManager.requestPermission(device, intent)
-                        }
-                    },
-                )
+                val baseName = device.productName ?: "USB serial (VID 0x${device.vendorId.toString(16)})"
+                val driverType = driver.javaClass.simpleName.removeSuffix("Driver")
+                val multiPort = driver.ports.size > 1
+                val portCount = driver.ports.size.coerceAtLeast(1)
+                repeat(portCount) { portIdx ->
+                    val itemLabel = if (multiPort) "$baseName — port $portIdx  ·  $driverType"
+                                    else "$baseName  ·  $driverType"
+                    DropdownMenuItem(
+                        text = { Text(itemLabel) },
+                        onClick = {
+                            expanded = false
+                            if (usbManager.hasPermission(device)) {
+                                onDeviceSelected(device.vendorId, device.productId, baseName, portIdx)
+                            } else {
+                                pendingDevice = device
+                                pendingPortIndex = portIdx
+                                // FLAG_MUTABLE required so UsbManager can fill in EXTRA_PERMISSION_GRANTED.
+                                val mutabilityFlag =
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
+                                val intent = PendingIntent.getBroadcast(
+                                    context, 0,
+                                    Intent(ACTION_USB_PERMISSION).setPackage(context.packageName),
+                                    PendingIntent.FLAG_UPDATE_CURRENT or mutabilityFlag,
+                                )
+                                usbManager.requestPermission(device, intent)
+                            }
+                        },
+                    )
+                }
             }
         }
     }

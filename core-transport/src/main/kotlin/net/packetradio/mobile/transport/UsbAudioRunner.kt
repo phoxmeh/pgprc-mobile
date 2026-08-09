@@ -78,7 +78,7 @@ class UsbAudioRunner(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
         val pi = PendingIntent.getBroadcast(
             context, 0,
-            Intent(ACTION_USB_AUDIO_RUNNER_PERMISSION),
+            Intent(ACTION_USB_AUDIO_RUNNER_PERMISSION).setPackage(context.packageName),
             PendingIntent.FLAG_UPDATE_CURRENT or mutabilityFlag,
         )
         val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
@@ -123,12 +123,19 @@ class UsbAudioRunner(
                 ))
                 return@withContext
             }
+            if (config.serialPortIndex >= driver.ports.size) {
+                events.send(PortEvent.PortError(
+                    "Port ${config.serialPortIndex} not found on ${serialDevice.productName ?: "device"} " +
+                        "(${driver.ports.size} port(s) available).",
+                ))
+                return@withContext
+            }
 
             val connection = usbManager.openDevice(serialDevice) ?: run {
                 events.send(PortEvent.PortError("Failed to open USB device connection."))
                 return@withContext
             }
-            val serialPort = driver.ports[0]
+            val serialPort = driver.ports[config.serialPortIndex]
             try {
                 serialPort.open(connection)
                 serialPort.setParameters(9600, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
