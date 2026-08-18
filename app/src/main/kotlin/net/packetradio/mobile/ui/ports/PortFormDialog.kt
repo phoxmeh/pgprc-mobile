@@ -399,11 +399,13 @@ fun AfskSettingsDialog(
     onSave: (AfskSettings) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var txDelay    by remember { mutableStateOf(if (settings.txDelayMs < 0) "" else settings.txDelayMs.toString()) }
-    var preamble   by remember { mutableStateOf(settings.preambleFlags.toString()) }
-    var tail       by remember { mutableStateOf(settings.tailMs.toString()) }
-    var persist    by remember { mutableStateOf(settings.persist.toString()) }
-    var slotTime   by remember { mutableStateOf(settings.slotTimeMs.toString()) }
+    var txDelay          by remember { mutableStateOf(if (settings.txDelayMs < 0) "" else settings.txDelayMs.toString()) }
+    var preamble         by remember { mutableStateOf(settings.preambleFlags.toString()) }
+    var tail             by remember { mutableStateOf(settings.tailMs.toString()) }
+    var persist          by remember { mutableStateOf(settings.persist.toString()) }
+    var slotTime         by remember { mutableStateOf(settings.slotTimeMs.toString()) }
+    var carrierThreshold by remember { mutableStateOf("%.2f".format(settings.carrierThreshold)) }
+    var inputGain        by remember { mutableStateOf("%.1f".format(settings.inputGain)) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -451,6 +453,30 @@ fun AfskSettingsDialog(
                     label = { Text("Slot time (ms, default 100)") },
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 )
+                OutlinedTextField(
+                    value = carrierThreshold,
+                    onValueChange = { carrierThreshold = it.filter { c -> c.isDigit() || c == '.' } },
+                    label = { Text("Carrier threshold 0.0–1.0 (default 0.05)") },
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                )
+                Text(
+                    "Carrier threshold — RMS level above which the channel is considered busy. Raise (e.g. 0.10–0.20) if TX never fires on this device despite a clear channel.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+                OutlinedTextField(
+                    value = inputGain,
+                    onValueChange = { inputGain = it.filter { c -> c.isDigit() || c == '.' } },
+                    label = { Text("Input gain multiplier (default 1.0)") },
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                )
+                Text(
+                    "Input gain — software amplifier applied to audio input. Raise (e.g. 5.0–20.0) if this device's USB audio input level is very low.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
             }
         },
         confirmButton = {
@@ -461,6 +487,8 @@ fun AfskSettingsDialog(
                     tailMs       = tail.toIntOrNull()?.coerceAtLeast(0) ?: 50,
                     persist      = persist.toIntOrNull()?.coerceIn(0, 255) ?: 63,
                     slotTimeMs   = slotTime.toIntOrNull()?.coerceAtLeast(10) ?: 100,
+                    carrierThreshold = carrierThreshold.toDoubleOrNull()?.coerceIn(0.0, 1.0) ?: 0.05,
+                    inputGain        = inputGain.toDoubleOrNull()?.coerceAtLeast(0.1) ?: 1.0,
                 ))
             }) { Text("Save") }
         },

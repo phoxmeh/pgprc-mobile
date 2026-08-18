@@ -20,4 +20,8 @@ data class AfskSettings(
     val persist: Int = 63,
     /** CSMA slot time in milliseconds. */
     val slotTimeMs: Int = 100,
+    /** RMS carrier-detect threshold (0.0–1.0). Raise if the device's USB audio noise floor prevents TX. */
+    val carrierThreshold: Double = 0.05,
+    /** Software input gain multiplier (1.0 = unity). Raise on devices where USB audio input level is too low. */
+    val inputGain: Double = 1.0,
 )

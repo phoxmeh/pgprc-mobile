@@ -139,6 +139,10 @@ class UsbAudioRunner(
             try {
                 serialPort.open(connection)
                 serialPort.setParameters(9600, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
+                // DTR must be asserted for RTS PTT to work on Digirig and similar interfaces.
+                // Some Android USB host drivers leave DTR low after open, breaking RTS on devices
+                // that gate the PTT line on DTR being high.
+                serialPort.dtr = true
                 serialPort.rts = false
             } catch (e: IOException) {
                 events.send(PortEvent.PortError("Failed to open USB serial port: ${e.message}"))
@@ -147,8 +151,30 @@ class UsbAudioRunner(
             }
 
             fun setPtt(transmitting: Boolean) {
-                try { serialPort.rts = transmitting } catch (_: Exception) {}
+                try { serialPort.rts = transmitting } catch (e: Exception) {
+                    events.trySend(PortEvent.PortLog("PTT (RTS) error: ${e.message}"))
+                }
             }
+
+            // Signal the select loop when the USB device is physically removed.
+            val usbDetached = Channel<Unit>(Channel.CONFLATED)
+            val detachReceiver = object : BroadcastReceiver() {
+                override fun onReceive(ctx: Context, intent: Intent) {
+                    if (intent.action != UsbManager.ACTION_USB_DEVICE_DETACHED) return
+                    val device: UsbDevice? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+                        intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+                    else
+                        @Suppress("DEPRECATION") intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+                    if (device?.vendorId == config.serialVendorId && device?.productId == config.serialProductId) {
+                        usbDetached.trySend(Unit)
+                    }
+                }
+            }
+            ContextCompat.registerReceiver(
+                context, detachReceiver,
+                IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED),
+                ContextCompat.RECEIVER_EXPORTED,
+            )
 
             events.send(PortEvent.PortConnected)
             events.send(PortEvent.PortLog(
@@ -258,9 +284,15 @@ class UsbAudioRunner(
                         framesIn.onReceive { frame -> connDriver.frameReceived(frame) }
                         connDriver.timerFiredEvents.onReceive { id -> connDriver.onTimerFired(id) }
                         connDriver.t3FiredEvents.onReceive    { id -> connDriver.onT3Fired(id) }
+                        usbDetached.onReceive {
+                            events.send(PortEvent.PortDisconnected("USB device disconnected."))
+                            shouldStop = true
+                        }
                     }
                 }
             } finally {
+                context.unregisterReceiver(detachReceiver)
+                usbDetached.close()
                 connDriver.shutdown()
                 modemJob.cancel()
                 rxForwardJob.cancelAndJoin()

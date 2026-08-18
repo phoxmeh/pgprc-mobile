@@ -6,6 +6,8 @@ import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
+import android.media.audiofx.AutomaticGainControl
+import android.media.audiofx.NoiseSuppressor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
@@ -67,9 +69,7 @@ class AfskModem(
             log("USB audio: $hint as ${if (inputDevice == null) "input" else ""}${if (inputDevice == null && outputDevice == null) "/" else ""}${if (outputDevice == null) "output" else ""} — ensure the device is connected.")
             return@withContext
         }
-        if (audioDeviceName.isBlank()) {
-            log("USB audio auto-selected: ${inputDevice.productName} (input) / ${outputDevice.productName} (output).")
-        }
+        log("USB audio: input=${inputDevice.productName} (id=${inputDevice.id}), output=${outputDevice.productName} (id=${outputDevice.id}).")
 
         val sampleRate = config.sampleRate
         val audioFormat = AudioFormat.Builder()
@@ -79,16 +79,31 @@ class AfskModem(
             .build()
 
         val minBufIn = AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        // Use UNPROCESSED to avoid Android's audio policy overriding preferredDevice. MIC source
+        // triggers noise-suppression routing rules on some OEMs that silently redirect to the
+        // built-in mic even when preferredDevice is a USB audio device.
+        var audioSource = MediaRecorder.AudioSource.UNPROCESSED
         val record = try {
             AudioRecord.Builder()
-                .setAudioSource(MediaRecorder.AudioSource.MIC)
+                .setAudioSource(audioSource)
                 .setAudioFormat(audioFormat)
                 .setBufferSizeInBytes(minBufIn * 4)
                 .build()
                 .also { it.preferredDevice = inputDevice }
-        } catch (e: SecurityException) {
-            log("RECORD_AUDIO permission not granted — grant it in Settings > App permissions, then reconnect.")
-            return@withContext
+        } catch (_: Exception) {
+            // UNPROCESSED is not guaranteed on all devices; fall back to MIC.
+            audioSource = MediaRecorder.AudioSource.MIC
+            try {
+                AudioRecord.Builder()
+                    .setAudioSource(audioSource)
+                    .setAudioFormat(audioFormat)
+                    .setBufferSizeInBytes(minBufIn * 4)
+                    .build()
+                    .also { it.preferredDevice = inputDevice }
+            } catch (e: SecurityException) {
+                log("RECORD_AUDIO permission not granted — grant it in Settings > App permissions, then reconnect.")
+                return@withContext
+            }
         }
 
         if (record.state != AudioRecord.STATE_INITIALIZED) {
@@ -96,6 +111,16 @@ class AfskModem(
             record.release()
             return@withContext
         }
+
+        // Disable AGC and noise suppression regardless of audio source — these distort AFSK tones.
+        // UNPROCESSED bypasses them implicitly; for MIC fallback we disable them explicitly.
+        val agc = if (AutomaticGainControl.isAvailable())
+            AutomaticGainControl.create(record.audioSessionId)?.also { it.enabled = false }
+        else null
+        val ns = if (NoiseSuppressor.isAvailable())
+            NoiseSuppressor.create(record.audioSessionId)?.also { it.enabled = false }
+        else null
+        val sourceName = if (audioSource == MediaRecorder.AudioSource.UNPROCESSED) "UNPROCESSED" else "MIC (AGC+NS disabled)"
 
         val audioFormatOut = AudioFormat.Builder()
             .setSampleRate(sampleRate)
@@ -136,20 +161,22 @@ class AfskModem(
         }
 
         record.startRecording()
-        // Keep the AudioTrack running continuously so the USB audio endpoint stays active
-        // between transmissions.  Stopping/restarting it per TX causes the USB isochronous
-        // scheduling to re-initialize, which delays actual audio output by 50-150ms and
-        // makes PTT appear to fire before audio starts.
         track.play()
-        log("Modem started: ${config.baudRate} baud, mark=${config.markHz} Hz, space=${config.spaceHz} Hz, output latency=${outputLatencyMs}ms.")
+
+        log("Modem started: ${config.baudRate} baud, mark=${config.markHz} Hz, space=${config.spaceHz} Hz, output latency=${outputLatencyMs}ms, source=$sourceName.")
 
         // RX coroutine — reads AudioRecord and feeds the demodulator
         val rxJob = launch(Dispatchers.IO) {
             val readBuf = ShortArray(512)
+            val gain = settings.inputGain
             while (isActive) {
                 val n = record.read(readBuf, 0, readBuf.size)
                 if (n > 0) {
-                    for (i in 0 until n) demodulator.feed(readBuf[i])
+                    for (i in 0 until n) {
+                        val s = if (gain == 1.0) readBuf[i]
+                                else (readBuf[i] * gain).toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
+                        demodulator.feed(s)
+                    }
                 }
             }
         }
@@ -174,43 +201,62 @@ class AfskModem(
                 val nrziBits = NrziCodec.encode(hdlcBits)
                 val samples = modulator.modulate(nrziBits)
 
-                ptt(true)
                 val txDelayMs = when {
                     settings.txDelayMs >= 0 -> settings.txDelayMs
                     config.baudRate <= 300  -> TX_DELAY_HF_MS
                     else                    -> TX_DELAY_VHF_MS
                 }
+                log("TX: PTT on, ${samples.size} samples, ${frame.size} byte frame.")
+                ptt(true)
                 kotlinx.coroutines.delay(txDelayMs.toLong())
 
-                // Capture head position just before writing — the track is continuously running
-                // so the position is never reset; we use it as a relative reference.
-                val startHead = track.playbackHeadPosition.toLong() and 0xFFFFFFFFL
-                val targetHead = startHead + samples.size.toLong()
+                // Pause (immediate, no drain) + flush to reset position to 0, then pre-fill
+                // the buffer before play().  pause() keeps the USB endpoint alive — stop()
+                // can disconnect it on some Android versions requiring a full reconnect on play().
+                track.pause()
+                track.flush()
 
+                val targetHead = samples.size.toLong()
+                var writeError = false
                 var offset = 0
                 while (offset < samples.size) {
                     val chunk = minOf(minBufOut, samples.size - offset)
-                    track.write(samples, offset, chunk)
-                    offset += chunk
+                    val written = track.write(samples, offset, chunk)
+                    if (written <= 0) {
+                        log("TX: write returned $written at offset $offset/${samples.size}.")
+                        writeError = true
+                        break
+                    }
+                    offset += written
                 }
 
-                // Poll until all samples have passed through the audio pipeline.
-                // getPlaybackHeadPosition() tracks the pipeline position, not actual DAC output —
-                // add outputLatencyMs + TAIL_MS after the poll to cover the remaining hardware path.
-                val drainDeadline = System.currentTimeMillis() +
-                    samples.size.toLong() * 1000 / config.sampleRate + outputLatencyMs + 1000
-                while (System.currentTimeMillis() < drainDeadline) {
-                    val pos = track.playbackHeadPosition.toLong() and 0xFFFFFFFFL
-                    if (pos >= targetHead) break
-                    kotlinx.coroutines.delay(5)
+                if (!writeError) {
+                    track.play()
+                    log("TX: playing via ${track.routedDevice?.productName ?: "unknown"} (playState=${track.playState}).")
+                    val drainDeadline = System.currentTimeMillis() +
+                        samples.size.toLong() * 1000 / config.sampleRate + outputLatencyMs + 1000
+                    var prevPos = -1L
+                    while (System.currentTimeMillis() < drainDeadline) {
+                        val pos = track.playbackHeadPosition.toLong() and 0xFFFFFFFFL
+                        if (pos >= targetHead) break
+                        if (prevPos == pos) {
+                            log("TX: playback head stalled at $pos (target $targetHead).")
+                            break
+                        }
+                        prevPos = pos
+                        kotlinx.coroutines.delay(50)
+                    }
                 }
                 kotlinx.coroutines.delay(outputLatencyMs + settings.tailMs)
                 ptt(false)
+                log("TX: PTT off.")
             }
         } finally {
             rxJob.cancel()
             fwdJob.cancel()
             rxChannel.close()
+            try { agc?.release() } catch (_: Exception) {}
+            try { ns?.release() } catch (_: Exception) {}
             try { record.stop(); record.release() } catch (_: Exception) {}
             try { track.stop(); track.release() } catch (_: Exception) {}
             ptt(false)
@@ -219,17 +265,23 @@ class AfskModem(
     }
 
     private suspend fun csmaWait(demodulator: AfskDemodulator) {
+        var wasBusy = false
         while (true) {
             val rms = demodulator.rmsLevel()
-            if (rms < CARRIER_THRESHOLD) {
-                if ((Math.random() * 255).toInt() < settings.persist) return
+            if (rms < settings.carrierThreshold) {
+                if ((Math.random() * 255).toInt() < settings.persist) {
+                    if (wasBusy) log("CSMA: channel clear, transmitting.")
+                    return
+                }
+            } else if (!wasBusy) {
+                log("CSMA: channel busy (RMS=%.3f ≥ threshold=%.3f), waiting for clear channel.".format(rms, settings.carrierThreshold))
+                wasBusy = true
             }
             kotlinx.coroutines.delay(settings.slotTimeMs.toLong())
         }
     }
 
     companion object {
-        private const val CARRIER_THRESHOLD = 0.05
         private const val TX_DELAY_VHF_MS = 300
         private const val TX_DELAY_HF_MS = 500
     }
