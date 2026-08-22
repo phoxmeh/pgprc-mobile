@@ -53,10 +53,11 @@ import net.packetradio.mobile.model.kindLabel
 private fun PortConfig?.kissParamsOrDefault(): KissParams = when (this) {
     is PortConfig.KissTcp -> kissParams
     is PortConfig.BluetoothKiss -> kissParams
+    is PortConfig.BluetoothLeKiss -> kissParams
     else -> KissParams()
 }
 
-private enum class FormKind { AGWPE, KISS_TCP, BLUETOOTH_KISS, TELNET, USB_AUDIO }
+private enum class FormKind { AGWPE, KISS_TCP, BLUETOOTH_KISS, BLUETOOTH_LE_KISS, TELNET, USB_AUDIO }
 
 /**
  * Add/edit form for all supported port kinds. Editing an existing port keeps
@@ -77,6 +78,7 @@ fun PortFormDialog(
             when (initialConfig) {
                 is PortConfig.KissTcp -> FormKind.KISS_TCP
                 is PortConfig.BluetoothKiss -> FormKind.BLUETOOTH_KISS
+                is PortConfig.BluetoothLeKiss -> FormKind.BLUETOOTH_LE_KISS
                 is PortConfig.Telnet -> FormKind.TELNET
                 is PortConfig.UsbAudio -> FormKind.USB_AUDIO
                 else -> FormKind.AGWPE
@@ -113,6 +115,7 @@ fun PortFormDialog(
                 is PortConfig.Agwpe -> initialConfig.myCall
                 is PortConfig.KissTcp -> initialConfig.myCall
                 is PortConfig.BluetoothKiss -> initialConfig.myCall
+                is PortConfig.BluetoothLeKiss -> initialConfig.myCall
                 is PortConfig.UsbAudio -> initialConfig.myCall
                 else -> "N0CALL"
             },
@@ -122,6 +125,8 @@ fun PortFormDialog(
 
     var deviceAddress by remember { mutableStateOf((initialConfig as? PortConfig.BluetoothKiss)?.deviceAddress ?: "") }
     var deviceName by remember { mutableStateOf((initialConfig as? PortConfig.BluetoothKiss)?.deviceName ?: "") }
+    var leDeviceAddress by remember { mutableStateOf((initialConfig as? PortConfig.BluetoothLeKiss)?.deviceAddress ?: "") }
+    var leDeviceName by remember { mutableStateOf((initialConfig as? PortConfig.BluetoothLeKiss)?.deviceName ?: "") }
 
     val digirigInitial = initialConfig as? PortConfig.UsbAudio
     var digirigSerialVendorId by remember { mutableStateOf(digirigInitial?.serialVendorId) }
@@ -189,7 +194,7 @@ fun PortFormDialog(
                             port = when (newKind) {
                                 FormKind.AGWPE -> "8000"
                                 FormKind.KISS_TCP -> "8001"
-                                FormKind.BLUETOOTH_KISS, FormKind.USB_AUDIO -> port
+                                FormKind.BLUETOOTH_KISS, FormKind.BLUETOOTH_LE_KISS, FormKind.USB_AUDIO -> port
                                 FormKind.TELNET -> "23"
                             }
                         },
@@ -201,6 +206,12 @@ fun PortFormDialog(
                         selectedAddress = deviceAddress,
                         selectedName = deviceName,
                         onDeviceSelected = { address, devName -> deviceAddress = address; deviceName = devName },
+                    )
+                    FormKind.BLUETOOTH_LE_KISS -> BluetoothDevicePicker(
+                        selectedAddress = leDeviceAddress,
+                        selectedName = leDeviceName,
+                        onDeviceSelected = { address, devName -> leDeviceAddress = address; leDeviceName = devName },
+                        leOnly = true,
                     )
                     FormKind.USB_AUDIO -> {
                         UsbSerialDevicePicker(
@@ -290,7 +301,7 @@ fun PortFormDialog(
                             OutlinedTextField(password, { password = it }, label = { Text("Password") }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
                         }
                     }
-                    FormKind.KISS_TCP, FormKind.BLUETOOTH_KISS -> {
+                    FormKind.KISS_TCP, FormKind.BLUETOOTH_KISS, FormKind.BLUETOOTH_LE_KISS -> {
                         Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(checked = useKissParams, onCheckedChange = { useKissParams = it })
                             Text("Custom TNC parameters")
@@ -353,6 +364,15 @@ fun PortFormDialog(
                             kissParams = kissParams,
                         )
                     }
+                    FormKind.BLUETOOTH_LE_KISS -> {
+                        if (leDeviceAddress.isBlank()) return@TextButton
+                        PortConfig.BluetoothLeKiss(
+                            deviceAddress = leDeviceAddress,
+                            deviceName = leDeviceName,
+                            myCall = myCall,
+                            kissParams = kissParams,
+                        )
+                    }
                     FormKind.TELNET -> {
                         val portNum = port.toIntOrNull() ?: return@TextButton
                         PortConfig.Telnet(host = host, port = portNum)
@@ -389,6 +409,7 @@ private fun FormKind.label(): String = when (this) {
     FormKind.AGWPE -> "AGWPE"
     FormKind.KISS_TCP -> "KISS (TCP)"
     FormKind.BLUETOOTH_KISS -> "Bluetooth KISS"
+    FormKind.BLUETOOTH_LE_KISS -> "BLE KISS (lora-kiss-tnc)"
     FormKind.TELNET -> "Telnet"
     FormKind.USB_AUDIO -> "USB Audio/PTT"
 }

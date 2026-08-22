@@ -53,6 +53,19 @@ sealed interface PortConfig {
     ) : PortConfig
 
     /**
+     * BLE KISS TNC using the Nordic UART Service (NUS) GATT profile, e.g.
+     * lora-kiss-tnc. The device must already be bonded via Android's own
+     * Bluetooth settings; this app only connects, it never scans or pairs.
+     */
+    @Serializable
+    data class BluetoothLeKiss(
+        val deviceAddress: String,
+        val deviceName: String = "",
+        val myCall: String,
+        val kissParams: KissParams = KissParams(),
+    ) : PortConfig
+
+    /**
      * USB-serial KISS TNC over OTG. Identified by vendor/product id rather
      * than a device path — Android has no stable `/dev/ttyUSBx`-equivalent
      * exposed to apps, so the actual [android.hardware.usb.UsbDevice] is
@@ -128,6 +141,7 @@ fun PortConfig.kindLabel(): String = when (this) {
     is PortConfig.Agwpe -> "AGWPE"
     is PortConfig.KissTcp -> "KISS (TCP)"
     is PortConfig.BluetoothKiss -> "KISS (Bluetooth)"
+    is PortConfig.BluetoothLeKiss -> "KISS (BLE)"
     is PortConfig.UsbSerialKiss -> "KISS (USB)"
     is PortConfig.UsbAudio -> "USB Audio/PTT"
 }
@@ -140,7 +154,8 @@ fun PortConfig.kindLabel(): String = when (this) {
  * yet — its `PortRunner` doesn't exist at all — so it stays excluded until that lands.
  */
 fun PortConfig.supportsConnect(): Boolean = when (this) {
-    is PortConfig.Agwpe, is PortConfig.KissTcp, is PortConfig.BluetoothKiss, is PortConfig.UsbAudio -> true
+    is PortConfig.Agwpe, is PortConfig.KissTcp, is PortConfig.BluetoothKiss,
+    is PortConfig.BluetoothLeKiss, is PortConfig.UsbAudio -> true
     is PortConfig.Telnet, is PortConfig.Ssh, is PortConfig.UsbSerialKiss -> false
 }
 
@@ -149,8 +164,8 @@ fun PortConfig.isTerminalMode(): Boolean = this is PortConfig.Telnet
 
 /** Whether this port kind can send one-shot unconnected (UI) frames. */
 fun PortConfig.supportsUnproto(): Boolean = when (this) {
-    is PortConfig.Agwpe, is PortConfig.KissTcp, is PortConfig.BluetoothKiss, is PortConfig.UsbSerialKiss -> true
-    is PortConfig.UsbAudio -> true
+    is PortConfig.Agwpe, is PortConfig.KissTcp, is PortConfig.BluetoothKiss,
+    is PortConfig.BluetoothLeKiss, is PortConfig.UsbSerialKiss, is PortConfig.UsbAudio -> true
     is PortConfig.Telnet, is PortConfig.Ssh -> false
 }
 

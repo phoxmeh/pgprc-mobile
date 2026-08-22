@@ -41,6 +41,7 @@ fun BluetoothDevicePicker(
     selectedAddress: String,
     selectedName: String,
     onDeviceSelected: (address: String, name: String) -> Unit,
+    leOnly: Boolean = false,
 ) {
     val context = LocalContext.current
     var expanded by remember { mutableStateOf(false) }
@@ -59,7 +60,9 @@ fun BluetoothDevicePicker(
     val devices: List<BluetoothDevice> = if (hasPermission) {
         try {
             val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter
-            adapter?.bondedDevices?.toList() ?: emptyList()
+            adapter?.bondedDevices
+                ?.filter { !leOnly || it.type == BluetoothDevice.DEVICE_TYPE_LE || it.type == BluetoothDevice.DEVICE_TYPE_DUAL }
+                ?.toList() ?: emptyList()
         } catch (_: SecurityException) {
             emptyList()
         }

@@ -30,6 +30,7 @@ private const val KIND_SSH = "ssh"
 private const val KIND_AGWPE = "agwpe"
 private const val KIND_KISS_TCP = "kiss_tcp"
 private const val KIND_BLUETOOTH_KISS = "bluetooth_kiss"
+private const val KIND_BLUETOOTH_LE_KISS = "bluetooth_le_kiss"
 private const val KIND_USB_SERIAL_KISS = "usb_serial_kiss"
 private const val KIND_USB_AUDIO = "usb_audio"
 
@@ -41,6 +42,7 @@ fun PortConfig.toKindAndJson(): Pair<String, String> = when (this) {
     is PortConfig.Agwpe -> KIND_AGWPE to json.encodeToString(PortConfig.Agwpe.serializer(), this)
     is PortConfig.KissTcp -> KIND_KISS_TCP to json.encodeToString(PortConfig.KissTcp.serializer(), this)
     is PortConfig.BluetoothKiss -> KIND_BLUETOOTH_KISS to json.encodeToString(PortConfig.BluetoothKiss.serializer(), this)
+    is PortConfig.BluetoothLeKiss -> KIND_BLUETOOTH_LE_KISS to json.encodeToString(PortConfig.BluetoothLeKiss.serializer(), this)
     is PortConfig.UsbSerialKiss -> KIND_USB_SERIAL_KISS to json.encodeToString(PortConfig.UsbSerialKiss.serializer(), this)
     is PortConfig.UsbAudio -> KIND_USB_AUDIO to json.encodeToString(PortConfig.UsbAudio.serializer(), this)
 }
@@ -51,6 +53,7 @@ fun portConfigFromKindAndJson(kind: String, configJson: String): PortConfig = wh
     KIND_AGWPE -> json.decodeFromString(PortConfig.Agwpe.serializer(), configJson)
     KIND_KISS_TCP -> json.decodeFromString(PortConfig.KissTcp.serializer(), configJson)
     KIND_BLUETOOTH_KISS -> json.decodeFromString(PortConfig.BluetoothKiss.serializer(), configJson)
+    KIND_BLUETOOTH_LE_KISS -> json.decodeFromString(PortConfig.BluetoothLeKiss.serializer(), configJson)
     KIND_USB_SERIAL_KISS -> json.decodeFromString(PortConfig.UsbSerialKiss.serializer(), configJson)
     KIND_USB_AUDIO -> json.decodeFromString(PortConfig.UsbAudio.serializer(), configJson)
     else -> error("Unknown port kind '$kind' in stored config — was a port added without a matching toKindAndJson() case?")
