@@ -16,3 +16,6 @@ local.properties
 # Keystores — never commit signing material
 *.jks
 *.keystore
+
+# Kotlin build daemon cache
+.kotlin/
