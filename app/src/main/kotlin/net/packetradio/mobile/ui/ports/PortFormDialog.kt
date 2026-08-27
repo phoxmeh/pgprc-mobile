@@ -47,6 +47,7 @@ import net.packetradio.mobile.model.AgwpeLogin
 import net.packetradio.mobile.model.KissParams
 import net.packetradio.mobile.model.ModemMode
 import net.packetradio.mobile.model.PortConfig
+import net.packetradio.mobile.model.PttMethod
 import net.packetradio.mobile.model.PortEntry
 import net.packetradio.mobile.model.kindLabel
 
@@ -135,6 +136,7 @@ fun PortFormDialog(
     var digirigSerialPortIndex by remember { mutableStateOf(digirigInitial?.serialPortIndex ?: 0) }
     var digirigAudioProductName by remember { mutableStateOf(digirigInitial?.audioProductName ?: "") }
     var modemMode by remember { mutableStateOf(digirigInitial?.modemMode ?: ModemMode.BELL_202_1200) }
+    var pttMethod by remember { mutableStateOf(digirigInitial?.pttMethod ?: PttMethod.RTS) }
     var afskSettings by remember { mutableStateOf(digirigInitial?.afskSettings ?: AfskSettings()) }
     var showAfskSettings by remember { mutableStateOf(false) }
     var showLevelMeter by remember { mutableStateOf(false) }
@@ -266,6 +268,10 @@ fun PortFormDialog(
                                 )
                             }
                         }
+                        PttMethodPicker(
+                            selected = pttMethod,
+                            onSelected = { pttMethod = it },
+                        )
                         if (showAfskSettings) {
                             AfskSettingsDialog(
                                 settings = afskSettings,
@@ -393,6 +399,7 @@ fun PortFormDialog(
                             serialPortIndex = digirigSerialPortIndex,
                             myCall = myCall,
                             modemMode = modemMode,
+                            pttMethod = pttMethod,
                             afskSettings = afskSettings,
                         )
                     }

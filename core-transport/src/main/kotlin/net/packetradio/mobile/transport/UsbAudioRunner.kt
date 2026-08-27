@@ -26,6 +26,7 @@ import net.packetradio.mobile.model.PortCommand
 import net.packetradio.mobile.model.PortConfig
 import net.packetradio.mobile.model.PortEvent
 import net.packetradio.mobile.model.PortRunner
+import net.packetradio.mobile.model.PttMethod
 import net.packetradio.mobile.modem.AfskModem
 import net.packetradio.mobile.modem.toAfskConfig
 import net.packetradio.mobile.protocol.Ax25
@@ -139,11 +140,23 @@ class UsbAudioRunner(
             try {
                 serialPort.open(connection)
                 serialPort.setParameters(9600, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
-                // DTR must be asserted for RTS PTT to work on Digirig and similar interfaces.
-                // Some Android USB host drivers leave DTR low after open, breaking RTS on devices
-                // that gate the PTT line on DTR being high.
-                serialPort.dtr = true
-                serialPort.rts = false
+                when (config.pttMethod) {
+                    PttMethod.RTS -> {
+                        // DTR must be held high so that interfaces that gate the RTS PTT line
+                        // on DTR (Digirig, some homebrew interfaces) work correctly.
+                        serialPort.dtr = true
+                        serialPort.rts = false
+                    }
+                    PttMethod.DTR -> {
+                        serialPort.dtr = false  // PTT off initially
+                        serialPort.rts = false
+                    }
+                    PttMethod.CAT -> {
+                        serialPort.dtr = true
+                        serialPort.rts = false
+                        serialPort.write("RX;".toByteArray(Charsets.US_ASCII), 200)
+                    }
+                }
             } catch (e: IOException) {
                 events.send(PortEvent.PortError("Failed to open USB serial port: ${e.message}"))
                 connection.close()
@@ -151,8 +164,17 @@ class UsbAudioRunner(
             }
 
             fun setPtt(transmitting: Boolean) {
-                try { serialPort.rts = transmitting } catch (e: Exception) {
-                    events.trySend(PortEvent.PortLog("PTT (RTS) error: ${e.message}"))
+                try {
+                    when (config.pttMethod) {
+                        PttMethod.RTS -> serialPort.rts = transmitting
+                        PttMethod.DTR -> serialPort.dtr = transmitting
+                        PttMethod.CAT -> serialPort.write(
+                            (if (transmitting) "TX;" else "RX;").toByteArray(Charsets.US_ASCII),
+                            200,
+                        )
+                    }
+                } catch (e: Exception) {
+                    events.trySend(PortEvent.PortLog("PTT (${config.pttMethod}) error: ${e.message}"))
                 }
             }
 
@@ -178,7 +200,7 @@ class UsbAudioRunner(
 
             events.send(PortEvent.PortConnected)
             events.send(PortEvent.PortLog(
-                "USB serial open: ${serialDevice.productName ?: "USB serial"} — PTT via RTS.",
+                "USB serial open: ${serialDevice.productName ?: "USB serial"} — PTT via ${config.pttMethod}.",
             ))
 
             // ── Modem TX/RX channels ────────────────────────────────────────────

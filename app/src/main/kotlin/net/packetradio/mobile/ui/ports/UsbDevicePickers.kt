@@ -55,6 +55,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import net.packetradio.mobile.model.ModemMode
+import net.packetradio.mobile.model.PttMethod
 import kotlin.math.sqrt
 
 private const val ACTION_USB_PERMISSION = "net.packetradio.mobile.USB_PERMISSION"
@@ -364,6 +365,44 @@ fun AudioLevelMeterDialog(audioProductName: String, onDismiss: () -> Unit) {
 private fun ModemMode.label(): String = when (this) {
     ModemMode.BELL_202_1200 -> "1200 baud AFSK (VHF/UHF — APRS, packet)"
     ModemMode.HF_300        -> "300 baud AFSK (HF — QDX, QMX, Winlink)"
+}
+
+private fun PttMethod.label(): String = when (this) {
+    PttMethod.RTS -> "RTS (Digirig, most interfaces)"
+    PttMethod.DTR -> "DTR (QDX, QMX — check radio menu)"
+    PttMethod.CAT -> "CAT TX;/RX; (Kenwood-compatible)"
+}
+
+@Composable
+fun PttMethodPicker(
+    selected: PttMethod,
+    onSelected: (PttMethod) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+        modifier = modifier,
+    ) {
+        OutlinedTextField(
+            value = selected.label(),
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("PTT method") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
+        )
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            for (method in PttMethod.entries) {
+                DropdownMenuItem(
+                    text = { Text(method.label()) },
+                    onClick = { onSelected(method); expanded = false },
+                )
+            }
+        }
+    }
 }
 
 @Composable

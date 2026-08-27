@@ -82,9 +82,8 @@ sealed interface PortConfig {
 
     /**
      * USB sound card + serial PTT interface (Digirig, QRP Labs QDX/QMX, and similar).
-     * PTT is controlled by asserting RTS on the USB serial port ([serialVendorId] /
-     * [serialProductId]); audio is routed to/from the USB audio device matched by
-     * [audioProductName] (from [android.media.AudioDeviceInfo.productName]).
+     * PTT method is selected via [pttMethod]; audio is routed to/from the USB audio device
+     * matched by [audioProductName] (from [android.media.AudioDeviceInfo.productName]).
      *
      * The AFSK modem lives in [net.packetradio.mobile.transport.UsbAudioRunner]
      * and converts between raw [android.media.AudioRecord] / [android.media.AudioTrack]
@@ -102,9 +101,22 @@ sealed interface PortConfig {
         val serialPortIndex: Int = 0,
         val myCall: String,
         val modemMode: ModemMode = ModemMode.BELL_202_1200,
+        val pttMethod: PttMethod = PttMethod.RTS,
         val afskSettings: AfskSettings = AfskSettings(),
     ) : PortConfig
 }
+
+/**
+ * How PTT is signalled over the USB serial port.
+ *
+ * - [RTS]: assert the RTS line (Digirig default). DTR is held high so that
+ *   interfaces that gate RTS on DTR work correctly.
+ * - [DTR]: assert the DTR line (QDX/QMX default when set to "DTR" in the radio menu).
+ * - [CAT]: send Kenwood-compatible CAT commands — `TX;` to transmit, `RX;` to receive.
+ *   Works with QDX, QMX, and most rigs using the Kenwood CAT dialect.
+ */
+@Serializable
+enum class PttMethod { RTS, DTR, CAT }
 
 @Serializable
 data class AgwpeLogin(
