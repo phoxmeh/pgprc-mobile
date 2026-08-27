@@ -8,6 +8,7 @@ import android.media.AudioTrack
 import android.media.MediaRecorder
 import android.media.audiofx.AutomaticGainControl
 import android.media.audiofx.NoiseSuppressor
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
@@ -15,6 +16,7 @@ import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import net.packetradio.mobile.model.AfskSettings
 import net.packetradio.mobile.model.ModemMode
 
@@ -230,14 +232,30 @@ class AfskModem(
                 }
 
                 if (!writeError) {
+                    // Ask the OS to tell us exactly when this buffer finishes playing, via
+                    // AudioTrack's own frame-position marker rather than polling
+                    // playbackHeadPosition ourselves — flush() does not reliably reset that
+                    // counter to 0 on every Android/HAL combination, so polling against an
+                    // assumed-zero baseline could report "done" immediately on a stale
+                    // position and cut PTT before audio plays. Reading the position fresh
+                    // right after flush() and marking relative to it sidesteps that even if
+                    // the counter didn't reset. (Pattern verified against FT8CN's working
+                    // AudioTrack TX path, which uses setNotificationMarkerPosition the same way.)
+                    val startPos = track.playbackHeadPosition
+                    val markerReached = CompletableDeferred<Unit>()
+                    track.setPlaybackPositionUpdateListener(object : AudioTrack.OnPlaybackPositionUpdateListener {
+                        override fun onMarkerReached(t: AudioTrack) { markerReached.complete(Unit) }
+                        override fun onPeriodicNotification(t: AudioTrack) {}
+                    })
+                    track.setNotificationMarkerPosition(startPos + samples.size)
                     track.play()
                     log("TX: playing via ${track.routedDevice?.productName ?: "unknown"} (playState=${track.playState}).")
-                    // Wait out the buffer's known playback duration directly rather than polling
-                    // AudioTrack.playbackHeadPosition — flush() does not reliably reset that
-                    // counter to 0 on every Android/HAL combination, which could make this
-                    // exit immediately on a stale position and cut PTT before audio plays.
-                    val playbackMs = samples.size.toLong() * 1000 / config.sampleRate
-                    kotlinx.coroutines.delay(playbackMs)
+
+                    val timeoutMs = samples.size.toLong() * 1000 / config.sampleRate + outputLatencyMs + 1000
+                    if (withTimeoutOrNull(timeoutMs) { markerReached.await() } == null) {
+                        log("TX: playback marker timed out after ${timeoutMs}ms.")
+                    }
+                    track.setPlaybackPositionUpdateListener(null)
                 }
                 kotlinx.coroutines.delay(outputLatencyMs + settings.tailMs)
                 ptt(false)
