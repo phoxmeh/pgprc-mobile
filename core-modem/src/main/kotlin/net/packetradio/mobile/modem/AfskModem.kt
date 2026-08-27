@@ -139,7 +139,15 @@ class AfskModem(
             .setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
             .build()
-        val track = AudioTrack.Builder()
+
+        // A fresh AudioTrack is built for EACH transmission (see the TX loop) rather than one
+        // long-lived track kept paused between frames. Confirmed via USB audio HAL logs: a track
+        // left paused/idle for even a few seconds has its underlying output patch torn down by
+        // Android on its own (observed identically on two different USB audio interfaces, with
+        // Bluetooth fully disabled, ruling out route contention from another device) — matching
+        // FT8CN's own working AudioTrack TX path, which likewise builds a new track per
+        // transmission rather than reusing one across idle periods.
+        fun buildOutputTrack(): AudioTrack = AudioTrack.Builder()
             .setAudioAttributes(trackAttributes)
             .setAudioFormat(audioFormatOut)
             .setBufferSizeInBytes(minBufOut * 4)
@@ -166,24 +174,29 @@ class AfskModem(
             hdlcDecoder.feed(nrziBit)
         }
 
-        // Query the hardware output latency once — the time from when getPlaybackHeadPosition()
-        // reports a frame as "played" to when it actually comes out of the DAC.  USB audio
-        // typically adds 40-120ms here.  getLatency() is @hide but stable and widely used.
-        val outputLatencyMs: Long = try {
-            (track.javaClass.getMethod("getLatency").invoke(track) as Int).toLong()
-        } catch (_: Exception) {
-            100L
+        // Query the hardware output latency once via a throwaway probe track — the time from
+        // when getPlaybackHeadPosition() reports a frame as "played" to when it actually comes
+        // out of the DAC. USB audio typically adds 40-120ms here. getLatency() is @hide but
+        // stable and widely used. Released immediately; the real per-transmission tracks are
+        // built fresh in the TX loop.
+        val outputLatencyMs: Long = buildOutputTrack().let { probe ->
+            try {
+                probe.play()
+                (probe.javaClass.getMethod("getLatency").invoke(probe) as Int).toLong()
+            } catch (_: Exception) {
+                100L
+            } finally {
+                try { probe.stop(); probe.release() } catch (_: Exception) {}
+            }
         }
 
         record.startRecording()
-        track.play()
 
         // Force the USB device's STREAM_MUSIC volume to max — Android tracks a separate
         // volume index per output device, and this app's TX level shouldn't depend on
-        // wherever the phone's media slider happens to be left. Called after play() so the
-        // USB device is the currently-routed target this sets the index for. The per-track
-        // setVolume(1.0f) above is a separate multiplier on top of this; both are needed
-        // since neither alone controls the other.
+        // wherever the phone's media slider happens to be left. The per-track setVolume(1.0f)
+        // in buildOutputTrack() is a separate multiplier on top of this; both are needed since
+        // neither alone controls the other.
         val maxMusicVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
         audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, maxMusicVolume, 0)
 
@@ -242,53 +255,51 @@ class AfskModem(
                 ptt(true)
                 kotlinx.coroutines.delay(txDelayMs.toLong())
 
-                // Pause (immediate, no drain) + flush before feeding this frame.
-                // pause() keeps the USB endpoint alive — stop() can disconnect it on some Android
-                // versions requiring a full reconnect on play().
-                track.pause()
-                track.flush()
+                // Build a fresh track for this transmission (see buildOutputTrack() kdoc for
+                // why: a long-lived track left paused between frames had its output patch torn
+                // down by Android after a few seconds).
+                val track = buildOutputTrack()
+                try {
+                    // Set up the completion marker and start playing BEFORE writing, then write
+                    // while it plays — the standard MODE_STREAM pattern (per AudioTrack's own
+                    // docs: call play() and keep calling write() as needed). Writing the whole
+                    // buffer first and calling play() only after was an earlier bug: this
+                    // track's hardware ring buffer is far smaller than a full AX.25 frame's
+                    // worth of audio (up to ~1.5s for a longer HF 300-baud frame), so once it
+                    // filled with nothing yet draining it, write() had nowhere to put further
+                    // data. Starting play() first lets the mixer drain the buffer continuously
+                    // as we feed it, exactly like feeding a stream.
+                    val markerReached = CompletableDeferred<Unit>()
+                    track.setPlaybackPositionUpdateListener(object : AudioTrack.OnPlaybackPositionUpdateListener {
+                        override fun onMarkerReached(t: AudioTrack) { markerReached.complete(Unit) }
+                        override fun onPeriodicNotification(t: AudioTrack) {}
+                    })
+                    track.setNotificationMarkerPosition(samples.size)
+                    track.play()
+                    log("TX: playing via ${track.routedDevice?.productName ?: "unknown"} (playState=${track.playState}).")
 
-                // Set up the completion marker and start playing BEFORE writing, then write
-                // while it plays — the standard MODE_STREAM pattern (per AudioTrack's own docs:
-                // call play() and keep calling write() as needed). Writing the whole buffer
-                // first and calling play() only after was the actual bug: this track's hardware
-                // ring buffer is far smaller than a full AX.25 frame's worth of audio (up to
-                // ~1.5s for a longer HF 300-baud frame), so once it filled with nothing yet
-                // draining it, write() had nowhere to put further data and returned 0 partway
-                // through — confirmed by USB audio HAL logs showing zero output-side activity
-                // on a failed TX (only the AudioRecord input interface toggled, never a
-                // playback patch). Starting play() first lets the mixer drain the buffer
-                // continuously as we feed it, exactly like feeding a stream.
-                val startPos = track.playbackHeadPosition
-                val markerReached = CompletableDeferred<Unit>()
-                track.setPlaybackPositionUpdateListener(object : AudioTrack.OnPlaybackPositionUpdateListener {
-                    override fun onMarkerReached(t: AudioTrack) { markerReached.complete(Unit) }
-                    override fun onPeriodicNotification(t: AudioTrack) {}
-                })
-                track.setNotificationMarkerPosition(startPos + samples.size)
-                track.play()
-                log("TX: playing via ${track.routedDevice?.productName ?: "unknown"} (playState=${track.playState}).")
-
-                var writeError = false
-                var offset = 0
-                while (offset < samples.size) {
-                    val chunk = minOf(minBufOut, samples.size - offset)
-                    val written = track.write(samples, offset, chunk)
-                    if (written <= 0) {
-                        log("TX: write returned $written at offset $offset/${samples.size}.")
-                        writeError = true
-                        break
+                    var writeError = false
+                    var offset = 0
+                    while (offset < samples.size) {
+                        val chunk = minOf(minBufOut, samples.size - offset)
+                        val written = track.write(samples, offset, chunk)
+                        if (written <= 0) {
+                            log("TX: write returned $written at offset $offset/${samples.size}.")
+                            writeError = true
+                            break
+                        }
+                        offset += written
                     }
-                    offset += written
-                }
 
-                if (!writeError) {
-                    val timeoutMs = samples.size.toLong() * 1000 / config.sampleRate + outputLatencyMs + 1000
-                    if (withTimeoutOrNull(timeoutMs) { markerReached.await() } == null) {
-                        log("TX: playback marker timed out after ${timeoutMs}ms.")
+                    if (!writeError) {
+                        val timeoutMs = samples.size.toLong() * 1000 / config.sampleRate + outputLatencyMs + 1000
+                        if (withTimeoutOrNull(timeoutMs) { markerReached.await() } == null) {
+                            log("TX: playback marker timed out after ${timeoutMs}ms.")
+                        }
                     }
+                } finally {
+                    try { track.stop(); track.release() } catch (_: Exception) {}
                 }
-                track.setPlaybackPositionUpdateListener(null)
                 kotlinx.coroutines.delay(outputLatencyMs + settings.tailMs)
                 ptt(false)
                 log("TX: PTT off.")
@@ -301,7 +312,6 @@ class AfskModem(
             try { agc?.release() } catch (_: Exception) {}
             try { ns?.release() } catch (_: Exception) {}
             try { record.stop(); record.release() } catch (_: Exception) {}
-            try { track.stop(); track.release() } catch (_: Exception) {}
             ptt(false)
             log("Modem stopped.")
         }
