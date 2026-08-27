@@ -1,15 +1,24 @@
 package net.packetradio.mobile.modem
 
-import kotlin.math.abs
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
  * Streaming AFSK demodulator using a sliding-window matched-filter (correlator).
  *
  * For each incoming PCM sample:
- *  1. Maintain circular buffers of length [windowSize] (= samplesPerSymbol, rounded).
- *  2. Compute mark energy and space energy as the squared magnitude of the DFT at
- *     the mark/space frequencies over the window (= matched filter output).
+ *  1. Multiply it against continuously-running mark/space reference oscillators
+ *     (NCOs), matching [AfskModulator]'s own continuous-phase approach and
+ *     Direwolf's demod_afsk.c (`osc_phase += osc_delta` every sample, never reset
+ *     to align with a window) — a table indexed by position within a symbol window
+ *     is only phase-consistent across window wraparound when the tone completes a
+ *     whole number of cycles per window, which isn't true for either tone pair this
+ *     app uses (e.g. 1600 Hz over a 160-sample window at 48 kHz is 5.33 cycles).
+ *  2. Maintain a sliding sum of those products over the last [windowSize] samples
+ *     (= matched filter output) by buffering each sample's products and
+ *     subtracting them back out [windowSize] samples later.
  *  3. Decision: markEnergy > spaceEnergy → 1, else → 0.
  *  4. Edge-track the decision signal to recover the symbol clock, then sample at
  *     the midpoint of each inferred symbol period.
@@ -21,12 +30,26 @@ internal class AfskDemodulator(
     private val onBit: (Boolean) -> Unit,
 ) {
     private val windowSize = config.samplesPerSymbol.toInt()
-    private val buf = DoubleArray(windowSize)
-    private var bufHead = 0   // circular buffer write index
+
+    // Circular buffers of each sample's mark/space reference-oscillator products,
+    // as they stood at insertion time — needed to subtract the exact contribution
+    // of the sample leaving the window, since the reference phase never repeats
+    // on a windowSize-aligned cycle.
+    private val markIBuf = DoubleArray(windowSize)
+    private val markQBuf = DoubleArray(windowSize)
+    private val spaceIBuf = DoubleArray(windowSize)
+    private val spaceQBuf = DoubleArray(windowSize)
+    private val magBuf = DoubleArray(windowSize)  // |sample|, for RMS level
+    private var bufHead = 0
 
     // Running correlator sums (updated incrementally to avoid O(N²))
     private var markI = 0.0; private var markQ = 0.0
     private var spaceI = 0.0; private var spaceQ = 0.0
+    private var magSum = 0.0
+
+    // Continuously-running reference oscillator phases (radians)
+    private var markPhase = 0.0
+    private var spacePhase = 0.0
 
     // Symbol clock state
     private var samplesSinceEdge = 0
@@ -36,21 +59,26 @@ internal class AfskDemodulator(
     fun feed(sample: Short) {
         val s = sample.toDouble() / Short.MAX_VALUE
 
-        // Remove oldest sample from running sums
-        val oldest = buf[bufHead]
-        val oldIdx = bufHead   // position in the pre-computed sinusoid table
-        markI  -= oldest * config.markCos[oldIdx]
-        markQ  -= oldest * config.markSin[oldIdx]
-        spaceI -= oldest * config.spaceCos[oldIdx]
-        spaceQ -= oldest * config.spaceSin[oldIdx]
+        val markCos = cos(markPhase); val markSin = sin(markPhase)
+        val spaceCos = cos(spacePhase); val spaceSin = sin(spacePhase)
+        markPhase = (markPhase + config.markPhaseIncrement) % (2.0 * PI)
+        spacePhase = (spacePhase + config.spacePhaseIncrement) % (2.0 * PI)
 
-        // Insert new sample
-        buf[bufHead] = s
-        val newIdx = bufHead
-        markI  += s * config.markCos[newIdx]
-        markQ  += s * config.markSin[newIdx]
-        spaceI += s * config.spaceCos[newIdx]
-        spaceQ += s * config.spaceSin[newIdx]
+        // Remove the sample leaving the window, using the exact products it was
+        // inserted with (not a fresh lookup — its reference phase never recurs).
+        markI  -= markIBuf[bufHead];  markQ  -= markQBuf[bufHead]
+        spaceI -= spaceIBuf[bufHead]; spaceQ -= spaceQBuf[bufHead]
+        magSum -= magBuf[bufHead]
+
+        val newMarkI = s * markCos; val newMarkQ = s * markSin
+        val newSpaceI = s * spaceCos; val newSpaceQ = s * spaceSin
+        markIBuf[bufHead] = newMarkI; markQBuf[bufHead] = newMarkQ
+        spaceIBuf[bufHead] = newSpaceI; spaceQBuf[bufHead] = newSpaceQ
+        magBuf[bufHead] = s * s
+
+        markI += newMarkI; markQ += newMarkQ
+        spaceI += newSpaceI; spaceQ += newSpaceQ
+        magSum += s * s
 
         bufHead = (bufHead + 1) % windowSize
 
@@ -78,17 +106,16 @@ internal class AfskDemodulator(
         lastDecision = decision
     }
 
-    // Level estimate for CSMA carrier detect (RMS of the circular buffer)
-    fun rmsLevel(): Double {
-        var sum = 0.0
-        for (s in buf) sum += s * s
-        return sqrt(sum / windowSize)
-    }
+    // Level estimate for CSMA carrier detect (RMS over the current window)
+    fun rmsLevel(): Double = sqrt(magSum / windowSize)
 
     fun reset() {
-        buf.fill(0.0)
+        markIBuf.fill(0.0); markQBuf.fill(0.0)
+        spaceIBuf.fill(0.0); spaceQBuf.fill(0.0)
+        magBuf.fill(0.0)
         bufHead = 0
-        markI = 0.0; markQ = 0.0; spaceI = 0.0; spaceQ = 0.0
+        markI = 0.0; markQ = 0.0; spaceI = 0.0; spaceQ = 0.0; magSum = 0.0
+        markPhase = 0.0; spacePhase = 0.0
         samplesSinceEdge = 0; lastDecision = false
     }
 }

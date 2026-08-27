@@ -2,8 +2,6 @@ package net.packetradio.mobile.modem
 
 import net.packetradio.mobile.model.ModemMode
 import kotlin.math.PI
-import kotlin.math.cos
-import kotlin.math.sin
 
 /**
  * Physical-layer parameters for one AFSK variant.
@@ -22,19 +20,18 @@ data class AfskConfig(
     /** Samples per symbol (may not be an integer — kept as Double for precision). */
     val samplesPerSymbol: Double = sampleRate.toDouble() / baudRate
 
-    /** Pre-computed cosine/sine tables for the correlator (one full symbol window). */
-    val markCos: DoubleArray
-    val markSin: DoubleArray
-    val spaceCos: DoubleArray
-    val spaceSin: DoubleArray
-
-    init {
-        val n = samplesPerSymbol.toInt()
-        markCos  = DoubleArray(n) { i -> cos(2.0 * PI * markHz  * i / sampleRate) }
-        markSin  = DoubleArray(n) { i -> sin(2.0 * PI * markHz  * i / sampleRate) }
-        spaceCos = DoubleArray(n) { i -> cos(2.0 * PI * spaceHz * i / sampleRate) }
-        spaceSin = DoubleArray(n) { i -> sin(2.0 * PI * spaceHz * i / sampleRate) }
-    }
+    /**
+     * Per-sample phase increment (radians) for each reference oscillator, for a
+     * continuously-running NCO — see [AfskDemodulator]. A table indexed by position
+     * within a symbol window (the previous approach) is only phase-consistent across
+     * window wraparound when the tone completes a whole number of cycles per window,
+     * which isn't true for either tone pair this app uses (e.g. 1600 Hz over a
+     * 160-sample window at 48 kHz is 5.33 cycles, not a whole number) — matches
+     * Direwolf's own demod_afsk.c technique (`osc_phase += osc_delta` every sample,
+     * never reset to align with a window).
+     */
+    val markPhaseIncrement: Double = 2.0 * PI * markHz / sampleRate
+    val spacePhaseIncrement: Double = 2.0 * PI * spaceHz / sampleRate
 
     companion object {
         val BELL_202_1200 = AfskConfig(baudRate = 1200, markHz = 1200,  spaceHz = 2200)

@@ -78,7 +78,18 @@ internal object HdlcCodec {
             if (window.size == 8 && isFlagOrAbort(window)) {
                 val isFlag = !window[7]  // last bit is 0 → FLAG; all-ones → abort
                 if (isFlag) {
-                    if (inFrame && frameBits.size >= 16) finishFrame()
+                    if (inFrame) {
+                        // The window match only fires once the flag's full 8 bits have
+                        // arrived, so its own leading 7 bits were already speculatively
+                        // fed through the destuffing branch above and appended to
+                        // frameBits before we could recognize them as "flag, not data".
+                        // Direwolf's hdlc_rec.c has the identical characteristic (see its
+                        // comment: "oacc would already have 7 bits from the special flag
+                        // pattern before it is detected here") and compensates with a
+                        // fixed offset; trim the same fixed 7 bits back out here.
+                        repeat(7) { if (frameBits.isNotEmpty()) frameBits.removeAt(frameBits.lastIndex) }
+                        if (frameBits.size >= 16) finishFrame()
+                    }
                     frameBits.clear()
                     inFrame = true
                     stuffCount = 0
@@ -92,10 +103,17 @@ internal object HdlcCodec {
 
             if (!inFrame) return
 
-            // Bit destuffing: a 0 following 5 ones is a stuffed bit — discard it
+            // Bit destuffing: a 0 following 5 ones is a stuffed bit — discard it.
+            // Six consecutive ones is NOT itself an error — it's exactly what any
+            // flag (01111110) contains, and self-resolves once the flag-window check
+            // above recognizes the full pattern and clears frameBits. Only abort at
+            // seven consecutive ones (genuine loss of sync), matching Direwolf's
+            // hdlc_rec.c pat_det == 0xfe check. The previous >5 threshold treated
+            // every flag's own six-ones run as a framing error, wiping frame data
+            // one bit before the closing flag would have completed it.
             if (bit) {
                 stuffCount++
-                if (stuffCount > 5) { inFrame = false; frameBits.clear(); return } // framing error
+                if (stuffCount >= 7) { inFrame = false; frameBits.clear(); return } // loss of sync
                 frameBits.add(true)
             } else {
                 if (stuffCount == 5) {
