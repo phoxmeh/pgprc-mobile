@@ -15,6 +15,9 @@
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
     <!-- AudioRecord requires RECORD_AUDIO even when routing to a USB audio device. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Forces the USB output device's STREAM_MUSIC volume to max on connect, so TX level
+         doesn't depend on the phone's media slider. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <!-- Desktop-notification-equivalent (directed-frame / incoming-connection alerts). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />

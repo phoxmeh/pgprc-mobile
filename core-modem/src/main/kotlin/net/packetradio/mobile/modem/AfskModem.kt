@@ -1,5 +1,6 @@
 package net.packetradio.mobile.modem
 
+import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
@@ -130,12 +131,24 @@ class AfskModem(
             .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
             .build()
         val minBufOut = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        // USAGE_MEDIA/CONTENT_TYPE_MUSIC + explicit full volume, matching FT8CN's working
+        // AudioTrack TX path — an unset AudioAttributes leaves this track's behavior under
+        // system volume/audio-focus state unspecified, which could silently attenuate the
+        // AFSK tone even when write()/play() succeed with no error.
+        val trackAttributes = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+            .build()
         val track = AudioTrack.Builder()
+            .setAudioAttributes(trackAttributes)
             .setAudioFormat(audioFormatOut)
             .setBufferSizeInBytes(minBufOut * 4)
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
-            .also { it.preferredDevice = outputDevice }
+            .also {
+                it.preferredDevice = outputDevice
+                it.setVolume(1.0f)
+            }
 
         val modulator = AfskModulator(config)
         val rxChannel = Channel<ByteArray>(64)
@@ -164,6 +177,15 @@ class AfskModem(
 
         record.startRecording()
         track.play()
+
+        // Force the USB device's STREAM_MUSIC volume to max — Android tracks a separate
+        // volume index per output device, and this app's TX level shouldn't depend on
+        // wherever the phone's media slider happens to be left. Called after play() so the
+        // USB device is the currently-routed target this sets the index for. The per-track
+        // setVolume(1.0f) above is a separate multiplier on top of this; both are needed
+        // since neither alone controls the other.
+        val maxMusicVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, maxMusicVolume, 0)
 
         log("Modem started: ${config.baudRate} baud, mark=${config.markHz} Hz, space=${config.spaceHz} Hz, output latency=${outputLatencyMs}ms, source=$sourceName.")
 
