@@ -9,6 +9,7 @@ import android.media.AudioTrack
 import android.media.MediaRecorder
 import android.media.audiofx.AutomaticGainControl
 import android.media.audiofx.NoiseSuppressor
+import android.os.Process
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -202,11 +203,20 @@ class AfskModem(
 
         log("Modem started: ${config.baudRate} baud, mark=${config.markHz} Hz, space=${config.spaceHz} Hz, output latency=${outputLatencyMs}ms, source=$sourceName.")
 
-        // RX coroutine — reads AudioRecord and feeds the demodulator
-        val rxJob = launch(Dispatchers.IO) {
+        // RX runs on a dedicated thread at THREAD_PRIORITY_URGENT_AUDIO, not a coroutine on
+        // the shared Dispatchers.IO pool. Confirmed via logcat during a real TX failure:
+        // AudioFlinger's prepareTracks_l removed our TX track from its active list with
+        // "BUFFER TIMEOUT ... due to underrun" — the underlying hardware period here is only
+        // ~10ms (256 samples x 2 periods @ 48kHz), and ordinary scheduling jitter on a shared
+        // thread pool (this coroutine competed with the TX write loop and whatever else uses
+        // Dispatchers.IO) is enough to miss that deadline. THREAD_PRIORITY_URGENT_AUDIO is
+        // Android's own documented mechanism for exactly this class of real-time audio I/O.
+        val rxRunning = java.util.concurrent.atomic.AtomicBoolean(true)
+        val rxThread = Thread {
+            Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
             val readBuf = ShortArray(512)
             val gain = settings.inputGain
-            while (isActive) {
+            while (rxRunning.get()) {
                 val n = record.read(readBuf, 0, readBuf.size)
                 if (n > 0) {
                     for (i in 0 until n) {
@@ -216,7 +226,7 @@ class AfskModem(
                     }
                 }
             }
-        }
+        }.apply { name = "AfskModem-RX"; start() }
 
         // Frame forward coroutine — moves received frames from hdlcDecoder callback to caller
         val fwdJob = launch(Dispatchers.IO) {
@@ -252,20 +262,19 @@ class AfskModem(
                 // down by Android after a few seconds).
                 val track = buildOutputTrack()
                 try {
-                    // Prime the buffer with an initial chunk BEFORE calling play(), then keep
-                    // writing while it plays. Confirmed via logcat (AudioFlinger/AHal::Usb):
-                    // calling play() on a track with zero data queued starts the mixer pulling
-                    // from an empty buffer immediately — "[AHWSinkUSB] HF underrun" fired 30ms
-                    // after the interface enabled, and AudioFlinger's prepareTracks_l then
-                    // removed the track from its active list entirely ("BUFFER TIMEOUT ...
-                    // due to underrun") — once that happens nothing written afterward can play,
-                    // regardless of what the rest of this function does. Writing the *entire*
-                    // buffer before play() (the previous approach) has the opposite problem:
-                    // this track's hardware ring buffer is far smaller than a full AX.25 frame's
-                    // worth of audio (up to ~1.5s for a longer HF 300-baud frame), so once full
-                    // with nothing yet draining it, write() has nowhere to put the rest. Priming
-                    // one chunk avoids both: the mixer has something to consume the instant
-                    // play() starts, and the loop below keeps feeding it before that runs dry.
+                    // The actual write()/play() sequence runs on a dedicated
+                    // THREAD_PRIORITY_URGENT_AUDIO thread, not this coroutine. Confirmed via
+                    // logcat during a real TX failure: "[AHWSinkUSB] HF underrun" fired the
+                    // instant play() started, and AudioFlinger's prepareTracks_l then removed
+                    // the track from its active list ("BUFFER TIMEOUT ... due to underrun") —
+                    // this reproduced even after priming the buffer before play(), meaning the
+                    // problem isn't how much is queued up front but that writes weren't keeping
+                    // up in real time. The hardware period here is only ~10ms (256 samples x 2
+                    // periods @ 48kHz); this coroutine runs on the shared Dispatchers.IO pool
+                    // (also used by the RX loop and whatever else in the app needs it), and
+                    // ordinary scheduling jitter there is enough to miss that deadline.
+                    // THREAD_PRIORITY_URGENT_AUDIO is Android's own documented mechanism for
+                    // real-time audio I/O that can't tolerate being preempted.
                     val markerReached = CompletableDeferred<Unit>()
                     track.setPlaybackPositionUpdateListener(object : AudioTrack.OnPlaybackPositionUpdateListener {
                         override fun onMarkerReached(t: AudioTrack) { markerReached.complete(Unit) }
@@ -273,39 +282,47 @@ class AfskModem(
                     })
                     track.setNotificationMarkerPosition(samples.size)
 
-                    var writeError = false
-                    var offset = 0
-                    val primeChunk = minOf(minBufOut, samples.size)
-                    val primed = track.write(samples, 0, primeChunk)
-                    if (primed <= 0) {
-                        log("TX: write returned $primed priming offset 0/${samples.size}.")
-                        writeError = true
-                    } else {
-                        offset = primed
-                    }
-
-                    if (!writeError) {
-                        track.play()
-                        log("TX: playing via ${track.routedDevice?.productName ?: "unknown"} (playState=${track.playState}).")
-                    }
-
-                    while (!writeError && offset < samples.size) {
-                        val chunk = minOf(minBufOut, samples.size - offset)
-                        val written = track.write(samples, offset, chunk)
-                        if (written <= 0) {
-                            log("TX: write returned $written at offset $offset/${samples.size}.")
+                    val writeSucceeded = CompletableDeferred<Boolean>()
+                    val writerThread = Thread {
+                        Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
+                        var writeError = false
+                        var offset = 0
+                        // Prime one chunk before play() so the mixer has something to consume
+                        // the instant playback starts, rather than pulling from an empty buffer.
+                        val primeChunk = minOf(minBufOut, samples.size)
+                        val primed = track.write(samples, 0, primeChunk)
+                        if (primed <= 0) {
+                            log("TX: write returned $primed priming offset 0/${samples.size}.")
                             writeError = true
-                            break
+                        } else {
+                            offset = primed
                         }
-                        offset += written
-                    }
 
-                    if (!writeError) {
+                        if (!writeError) {
+                            track.play()
+                            log("TX: playing via ${track.routedDevice?.productName ?: "unknown"} (playState=${track.playState}).")
+                        }
+
+                        while (!writeError && offset < samples.size) {
+                            val chunk = minOf(minBufOut, samples.size - offset)
+                            val written = track.write(samples, offset, chunk)
+                            if (written <= 0) {
+                                log("TX: write returned $written at offset $offset/${samples.size}.")
+                                writeError = true
+                                break
+                            }
+                            offset += written
+                        }
+                        writeSucceeded.complete(!writeError)
+                    }.apply { name = "AfskModem-TX"; start() }
+
+                    if (writeSucceeded.await()) {
                         val timeoutMs = samples.size.toLong() * 1000 / config.sampleRate + outputLatencyMs + 1000
                         if (withTimeoutOrNull(timeoutMs) { markerReached.await() } == null) {
                             log("TX: playback marker timed out after ${timeoutMs}ms.")
                         }
                     }
+                    writerThread.join(1000)
                 } finally {
                     try { track.stop(); track.release() } catch (_: Exception) {}
                 }
@@ -314,12 +331,14 @@ class AfskModem(
                 log("TX: PTT off.")
             }
         } finally {
-            rxJob.cancel()
+            rxRunning.set(false)
+            try { record.stop() } catch (_: Exception) {}  // unblocks the RX thread's read()
+            try { rxThread.join(1000) } catch (_: Exception) {}
             fwdJob.cancel()
             rxChannel.close()
             try { agc?.release() } catch (_: Exception) {}
             try { ns?.release() } catch (_: Exception) {}
-            try { record.stop(); record.release() } catch (_: Exception) {}
+            try { record.release() } catch (_: Exception) {}
             ptt(false)
             log("Modem stopped.")
         }
