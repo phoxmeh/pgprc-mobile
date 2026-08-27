@@ -220,11 +220,32 @@ class AfskModem(
                 ptt(true)
                 kotlinx.coroutines.delay(txDelayMs.toLong())
 
-                // Pause (immediate, no drain) + flush before pre-filling the buffer for play().
+                // Pause (immediate, no drain) + flush before feeding this frame.
                 // pause() keeps the USB endpoint alive — stop() can disconnect it on some Android
                 // versions requiring a full reconnect on play().
                 track.pause()
                 track.flush()
+
+                // Set up the completion marker and start playing BEFORE writing, then write
+                // while it plays — the standard MODE_STREAM pattern (per AudioTrack's own docs:
+                // call play() and keep calling write() as needed). Writing the whole buffer
+                // first and calling play() only after was the actual bug: this track's hardware
+                // ring buffer is far smaller than a full AX.25 frame's worth of audio (up to
+                // ~1.5s for a longer HF 300-baud frame), so once it filled with nothing yet
+                // draining it, write() had nowhere to put further data and returned 0 partway
+                // through — confirmed by USB audio HAL logs showing zero output-side activity
+                // on a failed TX (only the AudioRecord input interface toggled, never a
+                // playback patch). Starting play() first lets the mixer drain the buffer
+                // continuously as we feed it, exactly like feeding a stream.
+                val startPos = track.playbackHeadPosition
+                val markerReached = CompletableDeferred<Unit>()
+                track.setPlaybackPositionUpdateListener(object : AudioTrack.OnPlaybackPositionUpdateListener {
+                    override fun onMarkerReached(t: AudioTrack) { markerReached.complete(Unit) }
+                    override fun onPeriodicNotification(t: AudioTrack) {}
+                })
+                track.setNotificationMarkerPosition(startPos + samples.size)
+                track.play()
+                log("TX: playing via ${track.routedDevice?.productName ?: "unknown"} (playState=${track.playState}).")
 
                 var writeError = false
                 var offset = 0
@@ -240,31 +261,12 @@ class AfskModem(
                 }
 
                 if (!writeError) {
-                    // Ask the OS to tell us exactly when this buffer finishes playing, via
-                    // AudioTrack's own frame-position marker rather than polling
-                    // playbackHeadPosition ourselves — flush() does not reliably reset that
-                    // counter to 0 on every Android/HAL combination, so polling against an
-                    // assumed-zero baseline could report "done" immediately on a stale
-                    // position and cut PTT before audio plays. Reading the position fresh
-                    // right after flush() and marking relative to it sidesteps that even if
-                    // the counter didn't reset. (Pattern verified against FT8CN's working
-                    // AudioTrack TX path, which uses setNotificationMarkerPosition the same way.)
-                    val startPos = track.playbackHeadPosition
-                    val markerReached = CompletableDeferred<Unit>()
-                    track.setPlaybackPositionUpdateListener(object : AudioTrack.OnPlaybackPositionUpdateListener {
-                        override fun onMarkerReached(t: AudioTrack) { markerReached.complete(Unit) }
-                        override fun onPeriodicNotification(t: AudioTrack) {}
-                    })
-                    track.setNotificationMarkerPosition(startPos + samples.size)
-                    track.play()
-                    log("TX: playing via ${track.routedDevice?.productName ?: "unknown"} (playState=${track.playState}).")
-
                     val timeoutMs = samples.size.toLong() * 1000 / config.sampleRate + outputLatencyMs + 1000
                     if (withTimeoutOrNull(timeoutMs) { markerReached.await() } == null) {
                         log("TX: playback marker timed out after ${timeoutMs}ms.")
                     }
-                    track.setPlaybackPositionUpdateListener(null)
                 }
+                track.setPlaybackPositionUpdateListener(null)
                 kotlinx.coroutines.delay(outputLatencyMs + settings.tailMs)
                 ptt(false)
                 log("TX: PTT off.")
