@@ -272,13 +272,12 @@ class UsbAudioRunner(
                             when (command) {
                                 is PortCommand.Disconnect -> shouldStop = true
 
-                                is PortCommand.Probe -> {
-                                    try { serialPort.write(ByteArray(0), 100) }
-                                    catch (e: IOException) {
-                                        events.send(PortEvent.PortDisconnected("USB serial disconnected: ${e.message}"))
-                                        shouldStop = true
-                                    }
-                                }
+                                // No-op: unlike TCP/Bluetooth, a real USB unplug is already caught
+                                // by the ACTION_USB_DEVICE_DETACHED receiver above. A zero-length
+                                // write here was observed to periodically knock the QDX's composite
+                                // USB device (CDC-ACM serial + USB Audio sharing one USB peripheral
+                                // core) off the bus entirely, dropping the audio interface with it.
+                                is PortCommand.Probe -> {}
 
                                 is PortCommand.SendUnproto -> {
                                     val viaSuffix = if (command.via.isEmpty()) "" else " via ${command.via.joinToString(",")}"

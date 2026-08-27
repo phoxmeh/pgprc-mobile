@@ -210,13 +210,12 @@ class AfskModem(
                 ptt(true)
                 kotlinx.coroutines.delay(txDelayMs.toLong())
 
-                // Pause (immediate, no drain) + flush to reset position to 0, then pre-fill
-                // the buffer before play().  pause() keeps the USB endpoint alive — stop()
-                // can disconnect it on some Android versions requiring a full reconnect on play().
+                // Pause (immediate, no drain) + flush before pre-filling the buffer for play().
+                // pause() keeps the USB endpoint alive — stop() can disconnect it on some Android
+                // versions requiring a full reconnect on play().
                 track.pause()
                 track.flush()
 
-                val targetHead = samples.size.toLong()
                 var writeError = false
                 var offset = 0
                 while (offset < samples.size) {
@@ -233,19 +232,12 @@ class AfskModem(
                 if (!writeError) {
                     track.play()
                     log("TX: playing via ${track.routedDevice?.productName ?: "unknown"} (playState=${track.playState}).")
-                    val drainDeadline = System.currentTimeMillis() +
-                        samples.size.toLong() * 1000 / config.sampleRate + outputLatencyMs + 1000
-                    var prevPos = -1L
-                    while (System.currentTimeMillis() < drainDeadline) {
-                        val pos = track.playbackHeadPosition.toLong() and 0xFFFFFFFFL
-                        if (pos >= targetHead) break
-                        if (prevPos == pos) {
-                            log("TX: playback head stalled at $pos (target $targetHead).")
-                            break
-                        }
-                        prevPos = pos
-                        kotlinx.coroutines.delay(50)
-                    }
+                    // Wait out the buffer's known playback duration directly rather than polling
+                    // AudioTrack.playbackHeadPosition — flush() does not reliably reset that
+                    // counter to 0 on every Android/HAL combination, which could make this
+                    // exit immediately on a stale position and cut PTT before audio plays.
+                    val playbackMs = samples.size.toLong() * 1000 / config.sampleRate
+                    kotlinx.coroutines.delay(playbackMs)
                 }
                 kotlinx.coroutines.delay(outputLatencyMs + settings.tailMs)
                 ptt(false)

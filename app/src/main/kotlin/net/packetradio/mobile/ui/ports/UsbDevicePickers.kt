@@ -370,7 +370,7 @@ private fun ModemMode.label(): String = when (this) {
 private fun PttMethod.label(): String = when (this) {
     PttMethod.RTS -> "RTS"
     PttMethod.DTR -> "DTR"
-    PttMethod.CAT -> "CAT (TX; / RX;)"
+    PttMethod.CAT -> "CAT"
 }
 
 @Composable
