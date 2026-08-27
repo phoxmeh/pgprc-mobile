@@ -223,6 +223,11 @@ class AfskModem(
 
         record.startRecording()
 
+        // Confirms AudioRecord actually routed to the requested USB device rather than silently
+        // falling back to the built-in mic. routedDevice is only populated once capture is
+        // actively running, hence the check after startRecording().
+        log("RX: requested input=${inputDevice.productName} (id=${inputDevice.id}), actually routed to=${record.routedDevice?.productName ?: "unknown"} (id=${record.routedDevice?.id ?: -1}), inputGain=${settings.inputGain}.")
+
         // Force the USB device's STREAM_MUSIC volume to max. Per QRP Labs' own QDX operating
         // manual (section 2, "WSJT-X Pwr slider"): "QDX only ever transmits at full power...
         // there is no way for it to transmit at a lower power output under command of WSJT-X.

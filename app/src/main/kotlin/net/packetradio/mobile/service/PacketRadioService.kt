@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Binder
 import android.os.IBinder
 import android.widget.Toast
@@ -104,7 +105,18 @@ class PacketRadioService : Service() {
                 return START_NOT_STICKY
             }
         }
-        startForeground(NOTIFICATION_ID, buildNotification())
+        // Explicit type flags (not just the manifest's android:foregroundServiceType) are what
+        // actually make Android's RECORD_AUDIO app-op consider this service a valid foreground
+        // context for audio capture — see the FOREGROUND_SERVICE_MICROPHONE permission comment
+        // in AndroidManifest.xml for what happens without it.
+        ServiceCompat.startForeground(
+            this,
+            NOTIFICATION_ID,
+            buildNotification(),
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
+        )
         return START_STICKY
     }
 

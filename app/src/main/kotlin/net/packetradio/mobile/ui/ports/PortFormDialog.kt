@@ -246,8 +246,12 @@ fun PortFormDialog(
                             }
                         }
                         if (showLevelMeter) {
+                            // sampleRate matches AfskConfig's default (48000Hz), shared by both
+                            // modem modes — see core-modem/AfskConfig.kt.
                             AudioLevelMeterDialog(
                                 audioProductName = digirigAudioProductName,
+                                initialGain = afskSettings.inputGain,
+                                onGainChanged = { afskSettings = afskSettings.copy(inputGain = it) },
                                 onDismiss = { showLevelMeter = false },
                             )
                         }

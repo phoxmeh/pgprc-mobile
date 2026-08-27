@@ -31,6 +31,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- Required for the RECORD_AUDIO app-op to actually deliver captured samples while the
+         AFSK modem's AudioRecord runs inside the background service — without this, Android's
+         AudioPolicyService silently zeroes the input ("App op 27 missing, silencing record"),
+         even though the RECORD_AUDIO permission itself shows granted. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 
     <application
         android:name=".PacketRadioApp"
@@ -54,7 +59,7 @@
 
         <service
             android:name=".service.PacketRadioService"
-            android:foregroundServiceType="dataSync|connectedDevice"
+            android:foregroundServiceType="dataSync|connectedDevice|microphone"
             android:exported="false" />
 
     </application>

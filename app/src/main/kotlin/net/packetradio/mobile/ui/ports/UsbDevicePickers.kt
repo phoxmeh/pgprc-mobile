@@ -24,14 +24,20 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -42,6 +48,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -56,6 +63,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import net.packetradio.mobile.model.ModemMode
 import net.packetradio.mobile.model.PttMethod
+import kotlin.math.log10
 import kotlin.math.sqrt
 
 private const val ACTION_USB_PERMISSION = "net.packetradio.mobile.USB_PERMISSION"
@@ -246,50 +254,78 @@ fun UsbAudioDevicePicker(
 }
 
 /**
- * Live audio input level meter dialog. Opens the matching USB audio input device
- * and displays a VU meter so the user can calibrate their radio's audio output level.
- * Aim for the green zone (≤ 60%) to avoid overdriving the modem's demodulator.
+ * Live audio input level meter dialog. Opens the matching USB audio input device and displays
+ * a dB-referenced VU meter, plus a live-adjustable gain control, so the user can calibrate
+ * their radio's audio output level before connecting. Aim for the green zone; amber is still
+ * fine; red means the signal is approaching full-scale clipping.
  */
 @Composable
-fun AudioLevelMeterDialog(audioProductName: String, onDismiss: () -> Unit) {
+fun AudioLevelMeterDialog(
+    audioProductName: String,
+    initialGain: Double,
+    onGainChanged: (Double) -> Unit,
+    onDismiss: () -> Unit,
+    // Matches AfskModem's own capture path exactly (same sample rate, same UNPROCESSED-then-MIC
+    // source fallback) so this meter reflects what the modem will actually hear, not a
+    // differently-configured AudioRecord that happens to behave differently on some devices.
+    sampleRate: Int = 48000,
+) {
     val context = LocalContext.current
     var level by remember { mutableStateOf(0f) }
     var statusText by remember { mutableStateOf("Opening audio device…") }
+    var gain by remember { mutableStateOf(initialGain.toFloat()) }
+    val gainState = rememberUpdatedState(gain)
 
     LaunchedEffect(Unit) {
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val inputDevice = audioManager.getDevices(AudioManager.GET_DEVICES_ALL).firstOrNull { info ->
-            val isUsb = info.type == AudioDeviceInfo.TYPE_USB_DEVICE ||
+        val allDevices = audioManager.getDevices(AudioManager.GET_DEVICES_ALL)
+        // Lists every USB input candidate in the status text below so a routing mismatch
+        // (matching the wrong sub-device of a composite USB peripheral) is visible directly
+        // rather than needing to be inferred indirectly from a silent meter.
+        val usbInputs = allDevices.filter { info ->
+            (info.type == AudioDeviceInfo.TYPE_USB_DEVICE ||
                 info.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
-                info.type == AudioDeviceInfo.TYPE_USB_ACCESSORY
-            val nameMatch = audioProductName.isBlank() ||
-                info.productName.toString().equals(audioProductName, ignoreCase = true)
-            isUsb && info.isSource && nameMatch
+                info.type == AudioDeviceInfo.TYPE_USB_ACCESSORY) && info.isSource
+        }
+        val inputDevice = usbInputs.firstOrNull { info ->
+            audioProductName.isBlank() || info.productName.toString().equals(audioProductName, ignoreCase = true)
         }
         if (inputDevice == null) {
             statusText = if (audioProductName.isBlank()) "No USB audio input found"
                          else "\"$audioProductName\" not found as input"
             return@LaunchedEffect
         }
-        statusText = "Device: ${inputDevice.productName}"
+        statusText = "Device: ${inputDevice.productName} (id=${inputDevice.id}) — candidates: " +
+            usbInputs.joinToString { "${it.productName}(id=${it.id})" }
 
-        val sampleRate = 44100
         val minBuf = AudioRecord.getMinBufferSize(
             sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
         )
+        val audioFormat = AudioFormat.Builder()
+            .setSampleRate(sampleRate)
+            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+            .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+            .build()
+        // Matches AfskModem's own production capture path exactly (UNPROCESSED with a MIC
+        // fallback, explicit preferredDevice) — see AfskModem.kt for why.
+        var sourceUsed = MediaRecorder.AudioSource.UNPROCESSED
         val record = try {
-            AudioRecord.Builder()
-                .setAudioSource(MediaRecorder.AudioSource.MIC)
-                .setAudioFormat(
-                    AudioFormat.Builder()
-                        .setSampleRate(sampleRate)
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-                        .build(),
-                )
-                .setBufferSizeInBytes(minBuf * 4)
-                .build()
-                .also { it.preferredDevice = inputDevice }
+            try {
+                AudioRecord.Builder()
+                    .setAudioSource(MediaRecorder.AudioSource.UNPROCESSED)
+                    .setAudioFormat(audioFormat)
+                    .setBufferSizeInBytes(minBuf * 4)
+                    .build()
+                    .also { it.preferredDevice = inputDevice }
+            } catch (_: Exception) {
+                sourceUsed = MediaRecorder.AudioSource.MIC
+                AudioRecord.Builder()
+                    .setAudioSource(MediaRecorder.AudioSource.MIC)
+                    .setAudioFormat(audioFormat)
+                    .setBufferSizeInBytes(minBuf * 4)
+                    .build()
+                    .also { it.preferredDevice = inputDevice }
+            }
         } catch (_: SecurityException) {
             statusText = "RECORD_AUDIO permission required — grant it in Settings > App permissions"
             return@LaunchedEffect
@@ -302,12 +338,23 @@ fun AudioLevelMeterDialog(audioProductName: String, onDismiss: () -> Unit) {
 
         record.startRecording()
         val buf = ShortArray(minBuf)
+        var loggedRoute = false
         try {
             while (isActive) {
                 val n = withContext(Dispatchers.IO) { record.read(buf, 0, buf.size) }
                 if (n > 0) {
+                    if (!loggedRoute) {
+                        loggedRoute = true
+                        val sourceName = if (sourceUsed == MediaRecorder.AudioSource.UNPROCESSED) "UNPROCESSED" else "MIC"
+                        statusText += " — routed to: ${record.routedDevice?.productName ?: "unknown"} " +
+                            "(id=${record.routedDevice?.id ?: -1}), source=$sourceName, rate=${sampleRate}Hz"
+                    }
+                    val g = gainState.value
                     var sumSq = 0.0
-                    for (i in 0 until n) sumSq += buf[i].toDouble() * buf[i].toDouble()
+                    for (i in 0 until n) {
+                        val s = buf[i] * g
+                        sumSq += s * s
+                    }
                     level = (sqrt(sumSq / n) / Short.MAX_VALUE).toFloat().coerceIn(0f, 1f)
                 }
             }
@@ -330,8 +377,16 @@ fun AudioLevelMeterDialog(audioProductName: String, onDismiss: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(12.dp))
-                // 20-segment VU meter: green 0–11, amber 12–15, red 16–19
-                val litCount = (level * 20).toInt()
+                // dB-referenced VU meter, not raw linear-amplitude fraction. Line-level packet
+                // audio normally sits well below full digital scale (nowhere near loud music
+                // playback), so a linear level/32767 fraction makes a perfectly good, decodable
+                // signal look almost empty. Mapping -50dBFS..0dBFS onto the bar instead is the
+                // standard way VU meters handle this and matches what the level actually means
+                // for FSK demodulation. 20-segment bar: green 0–11 (quiet/room to work with),
+                // amber 12–15 (solid signal), red 16–19 (approaching full-scale clipping).
+                val dbfs = if (level > 0f) 20f * log10(level) else METER_FLOOR_DB
+                val barFraction = ((dbfs - METER_FLOOR_DB) / -METER_FLOOR_DB).coerceIn(0f, 1f)
+                val litCount = (barFraction * 20).toInt()
                 Row(Modifier.fillMaxWidth()) {
                     repeat(20) { i ->
                         val baseColor = when {
@@ -351,16 +406,45 @@ fun AudioLevelMeterDialog(audioProductName: String, onDismiss: () -> Unit) {
                 }
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Aim for the green zone (below 60%)",
+                    "Aim for the green zone — amber is still fine, avoid red (clipping)",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                Spacer(Modifier.height(12.dp))
+                Text("Input gain: %.1fx".format(gain), style = MaterialTheme.typography.bodySmall)
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    IconButton(onClick = {
+                        gain = (gain - GAIN_STEP).coerceAtLeast(GAIN_MIN)
+                        onGainChanged(gain.toDouble())
+                    }) {
+                        Icon(Icons.Filled.Remove, contentDescription = "Decrease gain")
+                    }
+                    Slider(
+                        value = gain,
+                        onValueChange = { gain = it; onGainChanged(it.toDouble()) },
+                        valueRange = GAIN_MIN..GAIN_MAX,
+                        modifier = Modifier.weight(1f),
+                    )
+                    IconButton(onClick = {
+                        gain = (gain + GAIN_STEP).coerceAtMost(GAIN_MAX)
+                        onGainChanged(gain.toDouble())
+                    }) {
+                        Icon(Icons.Filled.Add, contentDescription = "Increase gain")
+                    }
+                }
             }
         },
         confirmButton = {},
         dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } },
     )
 }
+
+private const val GAIN_MIN = 0.1f
+private const val GAIN_MAX = 4f
+private const val GAIN_STEP = 0.1f
+
+/** Bottom of the VU meter's dB range — anything quieter than this reads as empty. */
+private const val METER_FLOOR_DB = -50f
 
 private fun ModemMode.label(): String = when (this) {
     ModemMode.BELL_202_1200 -> "1200 baud AFSK (VHF/UHF — APRS, packet)"
