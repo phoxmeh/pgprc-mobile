@@ -223,15 +223,20 @@ class AfskModem(
 
         record.startRecording()
 
-        // Deliberately NOT forcing the USB device's STREAM_MUSIC volume to max here (an
-        // earlier fix for a since-resolved physical issue — an unterminated dummy load was
-        // attenuating the signal). Confirmed via a recorded transmission that forcing max
-        // volume now overdrives the interface: 17% of samples in the burst were clipped at
-        // full digital scale, which alone is enough to break any FSK demodulator's mark/space
-        // comparison. TX level now follows whatever the phone's own media volume is set to —
-        // the operator should adjust it (same as tuning any radio interface's audio drive)
-        // until the receiving station's level indicator reads clean, not maxed. Matches
-        // FT8CN's own approach of a user-adjustable level rather than a forced maximum.
+        // Force the USB device's STREAM_MUSIC volume to max. Per QRP Labs' own QDX operating
+        // manual (section 2, "WSJT-X Pwr slider"): "QDX only ever transmits at full power...
+        // there is no way for it to transmit at a lower power output under command of WSJT-X.
+        // ...QDX cannot be 'over-driven' by too high volume, in the way that a SSB transceiver
+        // could. Therefore the 'Maximum' setting... is highly recommended, it is the optimum
+        // setting for QDX operation." QDX's audio input is a zero-crossing/frequency detector
+        // driving digital RF synthesis, not a linear mic-input path — per the same manual, the
+        // status LED flashes a distinct "volume too low" pattern below its detection threshold,
+        // and there is no usable middle ground between "detected reliably" and "not detected at
+        // all". That matches the observed symptom exactly: dropping the phone's media volume by
+        // even one step (Android's STREAM_MUSIC steps are coarse) can fall below that threshold
+        // and stop TX audio outright rather than merely making it quieter.
+        val maxMusicVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, maxMusicVolume, 0)
         log("Modem started: ${config.baudRate} baud, mark=${config.markHz} Hz, space=${config.spaceHz} Hz, output latency=${outputLatencyMs}ms, source=$sourceName.")
 
         // RX runs on a dedicated thread at THREAD_PRIORITY_URGENT_AUDIO, not a coroutine on
