@@ -223,14 +223,15 @@ class AfskModem(
 
         record.startRecording()
 
-        // Force the USB device's STREAM_MUSIC volume to max — Android tracks a separate
-        // volume index per output device, and this app's TX level shouldn't depend on
-        // wherever the phone's media slider happens to be left. The per-track setVolume(1.0f)
-        // in buildOutputTrack() is a separate multiplier on top of this; both are needed since
-        // neither alone controls the other.
-        val maxMusicVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, maxMusicVolume, 0)
-
+        // Deliberately NOT forcing the USB device's STREAM_MUSIC volume to max here (an
+        // earlier fix for a since-resolved physical issue — an unterminated dummy load was
+        // attenuating the signal). Confirmed via a recorded transmission that forcing max
+        // volume now overdrives the interface: 17% of samples in the burst were clipped at
+        // full digital scale, which alone is enough to break any FSK demodulator's mark/space
+        // comparison. TX level now follows whatever the phone's own media volume is set to —
+        // the operator should adjust it (same as tuning any radio interface's audio drive)
+        // until the receiving station's level indicator reads clean, not maxed. Matches
+        // FT8CN's own approach of a user-adjustable level rather than a forced maximum.
         log("Modem started: ${config.baudRate} baud, mark=${config.markHz} Hz, space=${config.spaceHz} Hz, output latency=${outputLatencyMs}ms, source=$sourceName.")
 
         // RX runs on a dedicated thread at THREAD_PRIORITY_URGENT_AUDIO, not a coroutine on
