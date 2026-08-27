@@ -368,9 +368,9 @@ private fun ModemMode.label(): String = when (this) {
 }
 
 private fun PttMethod.label(): String = when (this) {
-    PttMethod.RTS -> "RTS (Digirig, most interfaces)"
-    PttMethod.DTR -> "DTR (QDX, QMX — check radio menu)"
-    PttMethod.CAT -> "CAT TX;/RX; (Kenwood-compatible)"
+    PttMethod.RTS -> "RTS"
+    PttMethod.DTR -> "DTR"
+    PttMethod.CAT -> "CAT (TX; / RX;)"
 }
 
 @Composable

@@ -109,11 +109,11 @@ sealed interface PortConfig {
 /**
  * How PTT is signalled over the USB serial port.
  *
- * - [RTS]: assert the RTS line (Digirig default). DTR is held high so that
- *   interfaces that gate RTS on DTR work correctly.
- * - [DTR]: assert the DTR line (QDX/QMX default when set to "DTR" in the radio menu).
+ * - [RTS]: assert the RTS line. DTR is held high so that interfaces that gate
+ *   the RTS PTT line on DTR work correctly.
+ * - [DTR]: assert the DTR line.
  * - [CAT]: send Kenwood-compatible CAT commands — `TX;` to transmit, `RX;` to receive.
- *   Works with QDX, QMX, and most rigs using the Kenwood CAT dialect.
+ *   Check your radio's manual for which method it expects.
  */
 @Serializable
 enum class PttMethod { RTS, DTR, CAT }
