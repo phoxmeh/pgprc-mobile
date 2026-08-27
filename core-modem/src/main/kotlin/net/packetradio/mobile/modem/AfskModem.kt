@@ -208,6 +208,14 @@ class AfskModem(
                     config.baudRate <= 300  -> TX_DELAY_HF_MS
                     else                    -> TX_DELAY_VHF_MS
                 }
+                // Half-duplex: stop capture before keying up. Some USB audio + serial CAT
+                // interfaces share one composite USB peripheral core with limited capacity —
+                // running AudioRecord's continuous capture at the same time as the CAT PTT
+                // write and the AudioTrack playback can starve the output transfer (observed:
+                // track.write() failing partway through, mid-buffer). Matches Direwolf's
+                // default half-duplex behavior for single-sound-card TNC interfaces, which
+                // don't listen while transmitting.
+                record.stop()
                 log("TX: PTT on, ${samples.size} samples, ${frame.size} byte frame.")
                 ptt(true)
                 kotlinx.coroutines.delay(txDelayMs.toLong())
@@ -260,6 +268,7 @@ class AfskModem(
                 kotlinx.coroutines.delay(outputLatencyMs + settings.tailMs)
                 ptt(false)
                 log("TX: PTT off.")
+                record.startRecording()
             }
         } finally {
             rxJob.cancel()
