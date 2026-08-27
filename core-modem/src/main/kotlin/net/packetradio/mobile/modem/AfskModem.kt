@@ -243,14 +243,6 @@ class AfskModem(
                     config.baudRate <= 300  -> TX_DELAY_HF_MS
                     else                    -> TX_DELAY_VHF_MS
                 }
-                // Half-duplex: stop capture before keying up. Some USB audio + serial CAT
-                // interfaces share one composite USB peripheral core with limited capacity —
-                // running AudioRecord's continuous capture at the same time as the CAT PTT
-                // write and the AudioTrack playback can starve the output transfer (observed:
-                // track.write() failing partway through, mid-buffer). Matches Direwolf's
-                // default half-duplex behavior for single-sound-card TNC interfaces, which
-                // don't listen while transmitting.
-                record.stop()
                 log("TX: PTT on, ${samples.size} samples, ${frame.size} byte frame.")
                 ptt(true)
                 kotlinx.coroutines.delay(txDelayMs.toLong())
@@ -260,27 +252,44 @@ class AfskModem(
                 // down by Android after a few seconds).
                 val track = buildOutputTrack()
                 try {
-                    // Set up the completion marker and start playing BEFORE writing, then write
-                    // while it plays — the standard MODE_STREAM pattern (per AudioTrack's own
-                    // docs: call play() and keep calling write() as needed). Writing the whole
-                    // buffer first and calling play() only after was an earlier bug: this
-                    // track's hardware ring buffer is far smaller than a full AX.25 frame's
-                    // worth of audio (up to ~1.5s for a longer HF 300-baud frame), so once it
-                    // filled with nothing yet draining it, write() had nowhere to put further
-                    // data. Starting play() first lets the mixer drain the buffer continuously
-                    // as we feed it, exactly like feeding a stream.
+                    // Prime the buffer with an initial chunk BEFORE calling play(), then keep
+                    // writing while it plays. Confirmed via logcat (AudioFlinger/AHal::Usb):
+                    // calling play() on a track with zero data queued starts the mixer pulling
+                    // from an empty buffer immediately — "[AHWSinkUSB] HF underrun" fired 30ms
+                    // after the interface enabled, and AudioFlinger's prepareTracks_l then
+                    // removed the track from its active list entirely ("BUFFER TIMEOUT ...
+                    // due to underrun") — once that happens nothing written afterward can play,
+                    // regardless of what the rest of this function does. Writing the *entire*
+                    // buffer before play() (the previous approach) has the opposite problem:
+                    // this track's hardware ring buffer is far smaller than a full AX.25 frame's
+                    // worth of audio (up to ~1.5s for a longer HF 300-baud frame), so once full
+                    // with nothing yet draining it, write() has nowhere to put the rest. Priming
+                    // one chunk avoids both: the mixer has something to consume the instant
+                    // play() starts, and the loop below keeps feeding it before that runs dry.
                     val markerReached = CompletableDeferred<Unit>()
                     track.setPlaybackPositionUpdateListener(object : AudioTrack.OnPlaybackPositionUpdateListener {
                         override fun onMarkerReached(t: AudioTrack) { markerReached.complete(Unit) }
                         override fun onPeriodicNotification(t: AudioTrack) {}
                     })
                     track.setNotificationMarkerPosition(samples.size)
-                    track.play()
-                    log("TX: playing via ${track.routedDevice?.productName ?: "unknown"} (playState=${track.playState}).")
 
                     var writeError = false
                     var offset = 0
-                    while (offset < samples.size) {
+                    val primeChunk = minOf(minBufOut, samples.size)
+                    val primed = track.write(samples, 0, primeChunk)
+                    if (primed <= 0) {
+                        log("TX: write returned $primed priming offset 0/${samples.size}.")
+                        writeError = true
+                    } else {
+                        offset = primed
+                    }
+
+                    if (!writeError) {
+                        track.play()
+                        log("TX: playing via ${track.routedDevice?.productName ?: "unknown"} (playState=${track.playState}).")
+                    }
+
+                    while (!writeError && offset < samples.size) {
                         val chunk = minOf(minBufOut, samples.size - offset)
                         val written = track.write(samples, offset, chunk)
                         if (written <= 0) {
@@ -303,7 +312,6 @@ class AfskModem(
                 kotlinx.coroutines.delay(outputLatencyMs + settings.tailMs)
                 ptt(false)
                 log("TX: PTT off.")
-                record.startRecording()
             }
         } finally {
             rxJob.cancel()
