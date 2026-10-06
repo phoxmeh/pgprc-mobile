@@ -1,22 +1,30 @@
 package net.packetradio.mobile.modem
 
 import android.media.AudioAttributes
+import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
+import android.media.AudioRecordingConfiguration
 import android.media.AudioTrack
 import android.media.MediaRecorder
 import android.media.audiofx.AutomaticGainControl
 import android.media.audiofx.NoiseSuppressor
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.Process
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.channels.SendChannel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import net.packetradio.mobile.model.AfskSettings
@@ -24,6 +32,7 @@ import net.packetradio.mobile.model.ModemMode
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /** One outgoing burst of real audio for [AfskModem]'s continuous TX writer thread. */
 private class TxJob(val samples: ShortArray, val done: CompletableDeferred<Unit>)
@@ -57,28 +66,75 @@ class AfskModem(
     private val log: (String) -> Unit,
     private val ptt: (Boolean) -> Unit,
 ) {
-    suspend fun run() = withContext(Dispatchers.IO) {
-        fun isUsbAudio(info: AudioDeviceInfo) =
-            info.type == AudioDeviceInfo.TYPE_USB_DEVICE ||
-                info.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
-                info.type == AudioDeviceInfo.TYPE_USB_ACCESSORY
+    private fun isUsbAudio(info: AudioDeviceInfo) =
+        info.type == AudioDeviceInfo.TYPE_USB_DEVICE ||
+            info.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
+            info.type == AudioDeviceInfo.TYPE_USB_ACCESSORY
 
-        val allDevices = audioManager.getDevices(AudioManager.GET_DEVICES_ALL)
-
-        val allUsbDevices = if (audioDeviceName.isBlank()) {
-            allDevices.filter { isUsbAudio(it) }
-        } else {
-            allDevices.filter { isUsbAudio(it) && it.productName.toString().equals(audioDeviceName, ignoreCase = true) }
+    /** The configured device's input and output halves, or null (with a reason) if either is missing. */
+    private fun findDevices(): Pair<AudioDeviceInfo, AudioDeviceInfo>? {
+        val usb = audioManager.getDevices(AudioManager.GET_DEVICES_ALL).filter {
+            isUsbAudio(it) && (audioDeviceName.isBlank() || it.productName.toString().equals(audioDeviceName, ignoreCase = true))
         }
-
-        val inputDevice  = allUsbDevices.firstOrNull { it.isSource }
-        val outputDevice = allUsbDevices.firstOrNull { !it.isSource }
-
-        if (inputDevice == null || outputDevice == null) {
+        val input = usb.firstOrNull { it.isSource }
+        val output = usb.firstOrNull { !it.isSource }
+        if (input == null || output == null) {
             val hint = if (audioDeviceName.isBlank()) "no USB audio device" else "\"$audioDeviceName\" not found"
-            log("USB audio: $hint as ${if (inputDevice == null) "input" else ""}${if (inputDevice == null && outputDevice == null) "/" else ""}${if (outputDevice == null) "output" else ""} — ensure the device is connected.")
-            return@withContext
+            log("USB audio: $hint as ${if (input == null) "input" else ""}${if (input == null && output == null) "/" else ""}${if (output == null) "output" else ""} — waiting for it to be connected.")
+            return null
         }
+        return input to output
+    }
+
+    /**
+     * Runs the modem for as long as the port is open. The audio streams belong to one USB device,
+     * so if that device is unplugged the session is torn down (PTT released, streams closed) and
+     * the modem waits for it to come back, then starts a fresh session — rather than sitting on a
+     * dead AudioRecord/AudioTrack until the user disconnects and reconnects the port.
+     */
+    suspend fun run() = withContext(Dispatchers.IO) {
+        val deviceAdded = Channel<Unit>(Channel.CONFLATED)
+        val deviceLost = Channel<Unit>(Channel.CONFLATED)
+        val inUseIds = AtomicReference<Set<Int>>(emptySet())
+        val callback = object : AudioDeviceCallback() {
+            override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
+                if (addedDevices.any { isUsbAudio(it) }) deviceAdded.trySend(Unit)
+            }
+            override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
+                val ids = inUseIds.get()
+                if (removedDevices.any { it.id in ids }) deviceLost.trySend(Unit)
+            }
+        }
+        audioManager.registerAudioDeviceCallback(callback, Handler(Looper.getMainLooper()))
+        try {
+            while (isActive) {
+                val (inputDevice, outputDevice) = findDevices() ?: run {
+                    deviceAdded.receive()
+                    null
+                } ?: continue
+
+                deviceLost.tryReceive()  // forget a removal from before this session existed
+                inUseIds.set(setOf(inputDevice.id, outputDevice.id))
+                val session = launch { runSession(inputDevice, outputDevice) }
+                val removed = select<Boolean> {
+                    session.onJoin { false }
+                    deviceLost.onReceive { true }
+                }
+                if (!removed) return@withContext  // the session ended on its own (init failure etc.) — already logged
+
+                log("USB audio device removed — modem paused until it is plugged back in.")
+                session.cancelAndJoin()
+                inUseIds.set(emptySet())
+                var dropped = 0
+                while (txFrames.tryReceive().isSuccess) dropped++
+                if (dropped > 0) log("Dropped $dropped frame(s) queued while the audio device was gone.")
+            }
+        } finally {
+            audioManager.unregisterAudioDeviceCallback(callback)
+        }
+    }
+
+    private suspend fun runSession(inputDevice: AudioDeviceInfo, outputDevice: AudioDeviceInfo) = coroutineScope {
         log("USB audio: input=${inputDevice.productName} (id=${inputDevice.id}), output=${outputDevice.productName} (id=${outputDevice.id}).")
 
         val sampleRate = config.sampleRate
@@ -91,35 +147,42 @@ class AfskModem(
         val minBufIn = AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         // Use UNPROCESSED to avoid Android's audio policy overriding preferredDevice. MIC source
         // triggers noise-suppression routing rules on some OEMs that silently redirect to the
-        // built-in mic even when preferredDevice is a USB audio device.
-        var audioSource = MediaRecorder.AudioSource.UNPROCESSED
-        val record = try {
-            AudioRecord.Builder()
-                .setAudioSource(audioSource)
-                .setAudioFormat(audioFormat)
-                .setBufferSizeInBytes(minBufIn * 4)
-                .build()
-                .also { it.preferredDevice = inputDevice }
-        } catch (_: Exception) {
-            // UNPROCESSED is not guaranteed on all devices; fall back to MIC.
-            audioSource = MediaRecorder.AudioSource.MIC
-            try {
+        // built-in mic even when preferredDevice is a USB audio device. Some devices reject
+        // UNPROCESSED either by throwing from build() or by handing back an AudioRecord that never
+        // initializes (USB audio is the usual case), so both count as "not available" and fall
+        // through to MIC.
+        fun openRecord(source: Int): AudioRecord? {
+            val candidate = try {
                 AudioRecord.Builder()
-                    .setAudioSource(audioSource)
+                    .setAudioSource(source)
                     .setAudioFormat(audioFormat)
                     .setBufferSizeInBytes(minBufIn * 4)
                     .build()
                     .also { it.preferredDevice = inputDevice }
             } catch (e: SecurityException) {
-                log("RECORD_AUDIO permission not granted — grant it in Settings > App permissions, then reconnect.")
-                return@withContext
+                throw e
+            } catch (_: Exception) {
+                return null
             }
+            if (candidate.state != AudioRecord.STATE_INITIALIZED) {
+                candidate.release()
+                return null
+            }
+            return candidate
         }
-
-        if (record.state != AudioRecord.STATE_INITIALIZED) {
+        var audioSource = MediaRecorder.AudioSource.UNPROCESSED
+        val record = try {
+            openRecord(audioSource) ?: run {
+                audioSource = MediaRecorder.AudioSource.MIC
+                openRecord(audioSource)
+            }
+        } catch (_: SecurityException) {
+            log("RECORD_AUDIO permission not granted — grant it in Settings > App permissions, then reconnect.")
+            return@coroutineScope
+        }
+        if (record == null) {
             log("AudioRecord init failed — check USB audio device and RECORD_AUDIO permission.")
-            record.release()
-            return@withContext
+            return@coroutineScope
         }
 
         // Disable AGC and noise suppression regardless of audio source — these distort AFSK tones.
@@ -228,6 +291,33 @@ class AfskModem(
         // actively running, hence the check after startRecording().
         log("RX: requested input=${inputDevice.productName} (id=${inputDevice.id}), actually routed to=${record.routedDevice?.productName ?: "unknown"} (id=${record.routedDevice?.id ?: -1}), inputGain=${settings.inputGain}.")
 
+        // Read back what Android actually did with this capture (API 29+) instead of trusting the
+        // request: the formats it reports, and whether it is silencing us. Silencing is what made
+        // RX look dead earlier — the stream opened fine and routed correctly but delivered
+        // near-silence because the microphone foreground-service type was missing — and nothing
+        // in the AudioRecord API itself reports it. Logged on change only. Both formats are
+        // reported under their API names (format / clientFormat).
+        var lastRecordingReport = ""
+        fun reportRecordingConfig(c: AudioRecordingConfiguration) {
+            val line = "RX: Android reports format=${c.format.sampleRate}Hz, clientFormat=${c.clientFormat.sampleRate}Hz " +
+                "(requested ${sampleRate}Hz), silenced=${c.isClientSilenced}."
+            if (line == lastRecordingReport) return
+            lastRecordingReport = line
+            log(line)
+            if (c.isClientSilenced) {
+                log("RX: Android is silencing this capture — check the RECORD_AUDIO permission and that the app's foreground service is running with the microphone type.")
+            }
+        }
+        val recordingCallback: AudioManager.AudioRecordingCallback? =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                object : AudioManager.AudioRecordingCallback() {
+                    override fun onRecordingConfigChanged(configs: List<AudioRecordingConfiguration>) {
+                        configs.firstOrNull { it.clientAudioSessionId == record.audioSessionId }
+                            ?.let { reportRecordingConfig(it) }
+                    }
+                }.also { audioManager.registerAudioRecordingCallback(it, Handler(Looper.getMainLooper())) }
+            } else null
+
         // Pin STREAM_MUSIC to max so the TX level is deterministic instead of depending on
         // whatever the phone's media volume happens to be. Android's volume steps are coarse,
         // and a one-step change can drop some interfaces below their detection threshold
@@ -318,6 +408,7 @@ class AfskModem(
                 log("TX: PTT off.")
             }
         } finally {
+            recordingCallback?.let { try { audioManager.unregisterAudioRecordingCallback(it) } catch (_: Exception) {} }
             rxRunning.set(false)
             try { record.stop() } catch (_: Exception) {}  // unblocks the RX thread's read()
             try { rxThread.join(1000) } catch (_: Exception) {}

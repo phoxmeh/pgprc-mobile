@@ -27,6 +27,8 @@ import net.packetradio.mobile.model.PortConfig
 import net.packetradio.mobile.model.PortEvent
 import net.packetradio.mobile.model.PortRunner
 import net.packetradio.mobile.model.PttMethod
+import net.packetradio.mobile.model.SerialFlowControl
+import net.packetradio.mobile.model.SerialParity
 import net.packetradio.mobile.modem.AfskModem
 import net.packetradio.mobile.modem.toAfskConfig
 import net.packetradio.mobile.protocol.Ax25
@@ -139,7 +141,33 @@ class UsbAudioRunner(
             val serialPort = driver.ports[config.serialPortIndex]
             try {
                 serialPort.open(connection)
-                serialPort.setParameters(9600, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
+                val line = config.serial
+                serialPort.setParameters(
+                    line.baud,
+                    if (line.dataBits == 7) UsbSerialPort.DATABITS_7 else UsbSerialPort.DATABITS_8,
+                    if (line.stopBits == 2) UsbSerialPort.STOPBITS_2 else UsbSerialPort.STOPBITS_1,
+                    when (line.parity) {
+                        SerialParity.NONE -> UsbSerialPort.PARITY_NONE
+                        SerialParity.ODD -> UsbSerialPort.PARITY_ODD
+                        SerialParity.EVEN -> UsbSerialPort.PARITY_EVEN
+                    },
+                )
+                val flow = when (line.flowControl) {
+                    SerialFlowControl.NONE -> null
+                    SerialFlowControl.RTS_CTS -> UsbSerialPort.FlowControl.RTS_CTS
+                    SerialFlowControl.XON_XOFF -> UsbSerialPort.FlowControl.XON_XOFF
+                }
+                if (flow != null) {
+                    // Support varies by USB-serial chip, so ask the driver rather than assume.
+                    if (flow in serialPort.supportedFlowControl) {
+                        serialPort.flowControl = flow
+                        if (flow == UsbSerialPort.FlowControl.RTS_CTS && config.pttMethod == PttMethod.RTS) {
+                            events.send(PortEvent.PortLog("RTS/CTS flow control uses the RTS line, so RTS PTT may not key the radio."))
+                        }
+                    } else {
+                        events.send(PortEvent.PortLog("This USB serial adapter does not support $flow flow control; continuing without it."))
+                    }
+                }
                 when (config.pttMethod) {
                     PttMethod.RTS -> {
                         // DTR must be held high so that interfaces that gate the RTS PTT line
@@ -200,7 +228,8 @@ class UsbAudioRunner(
 
             events.send(PortEvent.PortConnected)
             events.send(PortEvent.PortLog(
-                "USB serial open: ${serialDevice.productName ?: "USB serial"} — PTT via ${config.pttMethod}.",
+                "USB serial open: ${serialDevice.productName ?: "USB serial"} — PTT via ${config.pttMethod}, " +
+                    "${config.serial.baud} ${config.serial.dataBits}${config.serial.parity.name.first()}${config.serial.stopBits}.",
             ))
 
             // ── Modem TX/RX channels ────────────────────────────────────────────

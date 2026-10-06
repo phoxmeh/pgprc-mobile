@@ -63,8 +63,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import net.packetradio.mobile.model.ModemMode
 import net.packetradio.mobile.model.PttMethod
-import kotlin.math.log10
-import kotlin.math.sqrt
 
 private const val ACTION_USB_PERMISSION = "net.packetradio.mobile.USB_PERMISSION"
 
@@ -271,7 +269,8 @@ fun AudioLevelMeterDialog(
     sampleRate: Int = 48000,
 ) {
     val context = LocalContext.current
-    var level by remember { mutableStateOf(0f) }
+    var peak by remember { mutableStateOf(0f) }
+    var rms by remember { mutableStateOf(0f) }
     var statusText by remember { mutableStateOf("Opening audio device…") }
     var gain by remember { mutableStateOf(initialGain.toFloat()) }
     val gainState = rememberUpdatedState(gain)
@@ -349,13 +348,10 @@ fun AudioLevelMeterDialog(
                         statusText += " — routed to: ${record.routedDevice?.productName ?: "unknown"} " +
                             "(id=${record.routedDevice?.id ?: -1}), source=$sourceName, rate=${sampleRate}Hz"
                     }
-                    val g = gainState.value
-                    var sumSq = 0.0
-                    for (i in 0 until n) {
-                        val s = buf[i] * g
-                        sumSq += s * s
-                    }
-                    level = (sqrt(sumSq / n) / Short.MAX_VALUE).toFloat().coerceIn(0f, 1f)
+                    val reading = AudioLevel.measure(buf, n, gainState.value)
+                    // Fast attack, slow decay: a short burst of audio stays visible long enough to read.
+                    peak = maxOf(reading.peak, peak * PEAK_DECAY)
+                    rms = reading.rms
                 }
             }
         } finally {
@@ -377,22 +373,19 @@ fun AudioLevelMeterDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(12.dp))
-                // dB-referenced VU meter, not raw linear-amplitude fraction. Line-level packet
-                // audio normally sits well below full digital scale (nowhere near loud music
-                // playback), so a linear level/32767 fraction makes a perfectly good, decodable
-                // signal look almost empty. Mapping -50dBFS..0dBFS onto the bar instead is the
-                // standard way VU meters handle this and matches what the level actually means
-                // for FSK demodulation. 20-segment bar: green 0–11 (quiet/room to work with),
-                // amber 12–15 (solid signal), red 16–19 (approaching full-scale clipping).
-                val dbfs = if (level > 0f) 20f * log10(level) else METER_FLOOR_DB
-                val barFraction = ((dbfs - METER_FLOOR_DB) / -METER_FLOOR_DB).coerceIn(0f, 1f)
-                val litCount = (barFraction * 20).toInt()
+                // Peak meter in dBFS, -60..0 across 20 segments (3 dB each). Line-level packet audio sits
+                // well below full digital scale, so a linear level/32767 bar made a decodable signal
+                // look nearly empty. Segment colors follow the target window rather than position:
+                // dim green = present but quiet, green = target (-20..-6 dBFS), amber = hot, red = clipping.
+                val litCount = (AudioLevel.barFraction(peak) * 20).toInt()
                 Row(Modifier.fillMaxWidth()) {
                     repeat(20) { i ->
+                        val topDb = AudioLevel.FLOOR_DB + 3f * (i + 1)
                         val baseColor = when {
-                            i < 12 -> Color(0xFF4CAF50)
-                            i < 16 -> Color(0xFFFFA000)
-                            else   -> Color(0xFFF44336)
+                            topDb <= AudioLevel.TARGET_LOW_DB -> Color(0xFF4CAF50).copy(alpha = 0.55f)
+                            topDb <= AudioLevel.TARGET_HIGH_DB -> Color(0xFF4CAF50)
+                            topDb <= -3f -> Color(0xFFFFA000)
+                            else -> Color(0xFFF44336)
                         }
                         Box(
                             Modifier
@@ -406,9 +399,20 @@ fun AudioLevelMeterDialog(
                 }
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Aim for the green zone — amber is still fine, avoid red (clipping)",
+                    "Peak %.0f dBFS · RMS %.0f dBFS".format(AudioLevel.dbfs(peak), AudioLevel.dbfs(rms)),
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    when (AudioLevel.status(peak)) {
+                        AudioLevel.Status.CLIPPING -> "Clipping. Turn the radio's USB audio level or the gain down."
+                        AudioLevel.Status.NO_SIGNAL -> "No signal. Check the device above and that the radio is producing audio."
+                        AudioLevel.Status.LOW -> "Quiet. Raise the gain or the radio's USB audio level; aim for peaks between about -20 and -6 dBFS."
+                        AudioLevel.Status.GOOD -> "Good level."
+                        AudioLevel.Status.HIGH -> "Hot — close to clipping. Back off a little."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (AudioLevel.status(peak) == AudioLevel.Status.CLIPPING) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(12.dp))
                 Text("Input gain: %.1fx".format(gain), style = MaterialTheme.typography.bodySmall)
@@ -443,8 +447,8 @@ private const val GAIN_MIN = 0.1f
 private const val GAIN_MAX = 4f
 private const val GAIN_STEP = 0.1f
 
-/** Bottom of the VU meter's dB range — anything quieter than this reads as empty. */
-private const val METER_FLOOR_DB = -50f
+/** Per-buffer fall-off of the peak display (~40ms buffers), so brief bursts stay readable. */
+private const val PEAK_DECAY = 0.85f
 
 private fun ModemMode.label(): String = when (this) {
     ModemMode.BELL_202_1200 -> "1200 baud AFSK (VHF/UHF — APRS, packet)"

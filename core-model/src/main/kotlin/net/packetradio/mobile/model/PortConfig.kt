@@ -103,6 +103,8 @@ sealed interface PortConfig {
         val modemMode: ModemMode = ModemMode.BELL_202_1200,
         val pttMethod: PttMethod = PttMethod.RTS,
         val afskSettings: AfskSettings = AfskSettings(),
+        /** Line settings for the serial port used for PTT/CAT. Defaults match the old fixed 9600 8N1. */
+        val serial: SerialSettings = SerialSettings(),
     ) : PortConfig
 }
 
@@ -117,6 +119,29 @@ sealed interface PortConfig {
  */
 @Serializable
 enum class PttMethod { RTS, DTR, CAT }
+
+@Serializable
+enum class SerialParity { NONE, ODD, EVEN }
+
+/**
+ * Hardware/software flow control on the PTT/CAT serial port. Leave at [NONE] unless the radio's CAT
+ * interface needs it: [RTS_CTS] hands the RTS line to the serial driver, so it cannot be combined
+ * with [PttMethod.RTS] keying.
+ */
+@Serializable
+enum class SerialFlowControl { NONE, RTS_CTS, XON_XOFF }
+
+/** Serial line settings for a USB Audio/PTT port's PTT/CAT serial connection. */
+@Serializable
+data class SerialSettings(
+    val baud: Int = 9600,
+    /** 7 or 8. */
+    val dataBits: Int = 8,
+    /** 1 or 2. */
+    val stopBits: Int = 1,
+    val parity: SerialParity = SerialParity.NONE,
+    val flowControl: SerialFlowControl = SerialFlowControl.NONE,
+)
 
 @Serializable
 data class AgwpeLogin(

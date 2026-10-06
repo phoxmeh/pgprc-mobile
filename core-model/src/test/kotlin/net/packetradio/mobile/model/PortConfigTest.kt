@@ -62,4 +62,31 @@ class PortConfigTest {
         assertEquals(false, usbSerialKiss.supportsConnect())
         assertEquals(false, telnet.needsNode())
     }
+
+    @Test
+    fun `usb audio config saved before serial settings existed loads with 9600 8N1`() {
+        val old = """{"serialVendorId":1,"serialProductId":2,"myCall":"KD3BFP-9","pttMethod":"CAT"}"""
+        val decoded = json.decodeFromString(PortConfig.UsbAudio.serializer(), old)
+        assertEquals(SerialSettings(), decoded.serial)
+        assertEquals(9600, decoded.serial.baud)
+        assertEquals(8, decoded.serial.dataBits)
+        assertEquals(1, decoded.serial.stopBits)
+        assertEquals(SerialParity.NONE, decoded.serial.parity)
+        assertEquals(SerialFlowControl.NONE, decoded.serial.flowControl)
+    }
+
+    @Test
+    fun `usb audio serial settings round-trip through json`() {
+        val config = PortConfig.UsbAudio(
+            serialVendorId = 1,
+            serialProductId = 2,
+            myCall = "KD3BFP-9",
+            serial = SerialSettings(38400, 7, 2, SerialParity.EVEN, SerialFlowControl.XON_XOFF),
+        )
+        val decoded = json.decodeFromString(
+            PortConfig.UsbAudio.serializer(),
+            json.encodeToString(PortConfig.UsbAudio.serializer(), config),
+        )
+        assertEquals(config, decoded)
+    }
 }

@@ -48,6 +48,7 @@ import net.packetradio.mobile.model.KissParams
 import net.packetradio.mobile.model.ModemMode
 import net.packetradio.mobile.model.PortConfig
 import net.packetradio.mobile.model.PttMethod
+import net.packetradio.mobile.model.SerialSettings
 import net.packetradio.mobile.model.PortEntry
 import net.packetradio.mobile.model.kindLabel
 
@@ -139,6 +140,8 @@ fun PortFormDialog(
     var pttMethod by remember { mutableStateOf(digirigInitial?.pttMethod ?: PttMethod.RTS) }
     var afskSettings by remember { mutableStateOf(digirigInitial?.afskSettings ?: AfskSettings()) }
     var showAfskSettings by remember { mutableStateOf(false) }
+    var serial by remember { mutableStateOf(digirigInitial?.serial ?: SerialSettings()) }
+    var showSerialSettings by remember { mutableStateOf(false) }
     var showLevelMeter by remember { mutableStateOf(false) }
     var saveError by remember { mutableStateOf("") }
 
@@ -276,6 +279,17 @@ fun PortFormDialog(
                             selected = pttMethod,
                             onSelected = { pttMethod = it },
                         )
+                        TextButton(onClick = { showSerialSettings = true }) {
+                            Text("Serial settings: ${serial.baud} ${serial.dataBits}${serial.parity.name.first()}${serial.stopBits}")
+                        }
+                        if (showSerialSettings) {
+                            SerialSettingsDialog(
+                                settings = serial,
+                                pttMethod = pttMethod,
+                                onSave = { serial = it; showSerialSettings = false },
+                                onDismiss = { showSerialSettings = false },
+                            )
+                        }
                         if (showAfskSettings) {
                             AfskSettingsDialog(
                                 settings = afskSettings,
@@ -405,6 +419,7 @@ fun PortFormDialog(
                             modemMode = modemMode,
                             pttMethod = pttMethod,
                             afskSettings = afskSettings,
+                            serial = serial,
                         )
                     }
                 }
