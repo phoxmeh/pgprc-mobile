@@ -228,18 +228,12 @@ class AfskModem(
         // actively running, hence the check after startRecording().
         log("RX: requested input=${inputDevice.productName} (id=${inputDevice.id}), actually routed to=${record.routedDevice?.productName ?: "unknown"} (id=${record.routedDevice?.id ?: -1}), inputGain=${settings.inputGain}.")
 
-        // Force the USB device's STREAM_MUSIC volume to max. Per QRP Labs' own QDX operating
-        // manual (section 2, "WSJT-X Pwr slider"): "QDX only ever transmits at full power...
-        // there is no way for it to transmit at a lower power output under command of WSJT-X.
-        // ...QDX cannot be 'over-driven' by too high volume, in the way that a SSB transceiver
-        // could. Therefore the 'Maximum' setting... is highly recommended, it is the optimum
-        // setting for QDX operation." QDX's audio input is a zero-crossing/frequency detector
-        // driving digital RF synthesis, not a linear mic-input path — per the same manual, the
-        // status LED flashes a distinct "volume too low" pattern below its detection threshold,
-        // and there is no usable middle ground between "detected reliably" and "not detected at
-        // all". That matches the observed symptom exactly: dropping the phone's media volume by
-        // even one step (Android's STREAM_MUSIC steps are coarse) can fall below that threshold
-        // and stop TX audio outright rather than merely making it quieter.
+        // Pin STREAM_MUSIC to max so the TX level is deterministic instead of depending on
+        // whatever the phone's media volume happens to be. Android's volume steps are coarse,
+        // and a one-step change can drop some interfaces below their detection threshold
+        // outright. TX drive is then set by the modulator's own scale (AfskModulator.AMPLITUDE).
+        // Note: this can overdrive interfaces with a linear audio input; if that shows up,
+        // this is the place to make the level user-adjustable instead.
         val maxMusicVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
         audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, maxMusicVolume, 0)
         log("Modem started: ${config.baudRate} baud, mark=${config.markHz} Hz, space=${config.spaceHz} Hz, output latency=${outputLatencyMs}ms, source=$sourceName.")

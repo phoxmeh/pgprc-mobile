@@ -40,7 +40,7 @@ import java.io.IOException
 private const val ACTION_USB_AUDIO_RUNNER_PERMISSION = "net.packetradio.mobile.USB_AUDIO_RUNNER_PERMISSION"
 
 /**
- * USB Audio/PTT transport (Digirig, QRP Labs QDX/QMX, and compatible interfaces).
+ * USB Audio/PTT transport (Digirig and compatible interfaces).
  *
  * Opens the USB serial port for RTS PTT control, then runs the [AfskModem] against
  * the selected USB audio device.  Received AX.25 frames from the modem are forwarded
@@ -274,8 +274,8 @@ class UsbAudioRunner(
 
                                 // No-op: unlike TCP/Bluetooth, a real USB unplug is already caught
                                 // by the ACTION_USB_DEVICE_DETACHED receiver above. A zero-length
-                                // write here was observed to periodically knock the QDX's composite
-                                // USB device (CDC-ACM serial + USB Audio sharing one USB peripheral
+                                // write here was observed to periodically knock a composite USB
+                                // device (CDC-ACM serial + USB Audio sharing one USB peripheral
                                 // core) off the bus entirely, dropping the audio interface with it.
                                 is PortCommand.Probe -> {}
 

@@ -10,7 +10,7 @@ Connects to a wide range of modems and TNCs:
 - **Bluetooth KISS** — SPP/RFCOMM to Mobilinkd, TNC3, and similar classic Bluetooth TNCs
 - **BLE KISS** — Nordic UART Service (NUS) GATT profile; targets [lora-kiss-tnc](https://github.com/dvano/lora-kiss-tnc) and compatible LoRa BLE TNCs
 - **USB-serial KISS** — OTG-attached serial KISS TNCs
-- **USB Audio/PTT** — AFSK soft-modem (Bell 202 1200 baud / HF 300 baud) for Digirig, QRP Labs QDX/QMX, and similar USB sound card + RTS-PTT interfaces
+- **USB Audio/PTT** — AFSK soft-modem (Bell 202 1200 baud / HF 300 baud) for Digirig and similar USB sound card + RTS-PTT interfaces
 - **Telnet** — raw terminal session to a BBS or node
 
 Features include AX.25 connected-mode sessions, NET/ROM routing, heard-station log, address book (import/export, QRZ lookup), scheduled beacons, and a Monitor view with callsign-highlight filtering.

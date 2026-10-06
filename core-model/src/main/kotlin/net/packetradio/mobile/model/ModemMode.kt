@@ -9,7 +9,7 @@ import kotlinx.serialization.Serializable
  *   Standard for VHF/UHF APRS and AX.25 packet (Digirig + any 2m/70cm radio).
  *
  * [HF_300] — 300 baud AFSK, mark=1600 Hz, space=1800 Hz.
- *   Standard for HF AX.25 packet and Winlink (QRP Labs QDX/QMX and similar).
+ *   Standard for HF AX.25 packet and Winlink.
  */
 @Serializable
 enum class ModemMode {

@@ -448,7 +448,7 @@ private const val METER_FLOOR_DB = -50f
 
 private fun ModemMode.label(): String = when (this) {
     ModemMode.BELL_202_1200 -> "1200 baud AFSK (VHF/UHF — APRS, packet)"
-    ModemMode.HF_300        -> "300 baud AFSK (HF — QDX, QMX, Winlink)"
+    ModemMode.HF_300        -> "300 baud AFSK (HF — packet, Winlink)"
 }
 
 private fun PttMethod.label(): String = when (this) {

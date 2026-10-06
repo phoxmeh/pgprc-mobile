@@ -81,7 +81,7 @@ sealed interface PortConfig {
     ) : PortConfig
 
     /**
-     * USB sound card + serial PTT interface (Digirig, QRP Labs QDX/QMX, and similar).
+     * USB sound card + serial PTT interface (Digirig and similar).
      * PTT method is selected via [pttMethod]; audio is routed to/from the USB audio device
      * matched by [audioProductName] (from [android.media.AudioDeviceInfo.productName]).
      *
