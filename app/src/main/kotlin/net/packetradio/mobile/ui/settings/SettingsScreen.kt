@@ -430,7 +430,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = viewModel(
             )
             Text(
                 "A remote packet-radio client for AGWPE, KISS-TCP, and Bluetooth KISS TNCs. " +
-                    "Licensed under the MIT License.",
+                    "Licensed under the GNU General Public License v3.0.",
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 4.dp),
             )

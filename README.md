@@ -40,4 +40,4 @@ Requires a JDK (21+) and the Android SDK (`compileSdk`/`targetSdk` 36, `minSdk` 
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+GNU General Public License v3.0 — see [LICENSE](LICENSE).
